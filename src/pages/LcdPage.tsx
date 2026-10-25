@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { IS_TAURI, invoke } from '../lib/hybrid'
 import { LCD_SIZE, drawImage, drawLive, rgba, type Fit } from '../lib/lcd'
+import { sendToKraken } from '../lcdLive'
 import { useStore } from '../store'
 
 type Mode = 'live' | 'image'
 
-const LIVE_EVERY_MS = 5000
-
 export function LcdPage() {
   const sensors = useStore((s) => s.sensors)
+  const live = useStore((s) => s.lcdLive)
+  const liveError = useStore((s) => s.lcdError)
+  const setLive = useStore((s) => s.setLcdLive)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [mode, setMode] = useState<Mode>('live')
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   const [fit, setFit] = useState<Fit>('cover')
   const [brightness, setBrightness] = useState(80)
   const [orientation, setOrientation] = useState(0)
-  const [auto, setAuto] = useState(false)
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const sensorsRef = useRef(sensors)
@@ -55,7 +56,6 @@ export function LcdPage() {
       setStatus({ ok: true, text: what })
     } catch (e) {
       setStatus({ ok: false, text: String(e) })
-      setAuto(false)
     } finally {
       setBusy(false)
     }
@@ -63,15 +63,9 @@ export function LcdPage() {
 
   const send = useCallback(() => {
     render()
-    return run('Sent to the cooler', () => invoke('kraken_image', rgba(canvas.current!)))
-  }, [render, run])
-
-  useEffect(() => {
-    if (!auto || mode !== 'live') return
-    void send()
-    const t = setInterval(() => void send(), LIVE_EVERY_MS)
-    return () => clearInterval(t)
-  }, [auto, mode, send])
+    if (mode === 'image') setLive(false) // the live loop would overwrite a picture
+    return run('Sent to the cooler', () => sendToKraken(rgba(canvas.current!)))
+  }, [render, run, mode, setLive])
 
   const applyDisplay = (b: number, o: number) =>
     run('Display updated', () => invoke('kraken_display', { brightness: b, orientation: o }))
@@ -108,9 +102,10 @@ export function LcdPage() {
                 </p>
               )}
               <label className="switch row-switch">
-                <input type="checkbox" checked={auto} disabled={!IS_TAURI} onChange={(e) => setAuto(e.target.checked)} />
-                <span>Keep updating every {LIVE_EVERY_MS / 1000} s</span>
+                <input type="checkbox" checked={live} disabled={!IS_TAURI} onChange={(e) => { setLive(e.target.checked); useStore.getState().setLcdError(null) }} />
+                <span>Keep the screen live (updates whenever a reading changes, even with this page closed)</span>
               </label>
+              {liveError && <p className="muted note err">{liveError}</p>}
             </>
           ) : (
             <div className="row" style={{ marginTop: 14 }}>
@@ -160,7 +155,7 @@ export function LcdPage() {
             <button className="btn primary" disabled={!IS_TAURI || busy || (mode === 'image' && !img)} onClick={() => void send()}>
               {busy ? 'Sending…' : 'Send to cooler'}
             </button>
-            <button className="btn" disabled={!IS_TAURI || busy} onClick={() => { setAuto(false); void run('Back to the built-in screen', () => invoke('kraken_liquid')) }}>
+            <button className="btn" disabled={!IS_TAURI || busy} onClick={() => { setLive(false); void run('Back to the built-in screen', () => invoke('kraken_liquid')) }}>
               Restore built-in screen
             </button>
           </div>

@@ -41,6 +41,8 @@ pub struct DeviceInfo {
     /// set when the device exposes a single LED matrix whose cells cover every LED
     pub cols: Option<u32>,
     pub zones: Vec<ZoneInfo>,
+    pub modes: Vec<String>,
+    pub active_mode: u32,
 }
 
 pub struct Client {
@@ -181,9 +183,10 @@ fn parse_device(index: u32, body: &[u8], proto: u32) -> Result<DeviceInfo, Strin
     }
 
     let n_modes = r.u16()?;
-    r.u32()?; // active mode
+    let active_mode = r.u32()?;
+    let mut modes = Vec::new();
     for _ in 0..n_modes {
-        r.string()?;
+        modes.push(r.string()?);
         // value, flags, speed min/max
         r.skip(16)?;
         if proto >= 3 {
@@ -229,7 +232,7 @@ fn parse_device(index: u32, body: &[u8], proto: u32) -> Result<DeviceInfo, Strin
         (Some((w, h)), 1) if w * h == led_count => Some(w),
         _ => None,
     };
-    Ok(DeviceInfo { index, name, kind, led_count, cols, zones })
+    Ok(DeviceInfo { index, name, kind, led_count, cols, zones, modes, active_mode })
 }
 
 #[cfg(test)]

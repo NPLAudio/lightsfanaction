@@ -16,6 +16,8 @@ interface State {
   selectedFan: string
   sensors: Sensor[]
   live: Record<string, FanLive>
+  lcdLive: boolean
+  lcdError: string | null
 
   init(): Promise<void>
   selectDevice(id: string): void
@@ -27,6 +29,8 @@ interface State {
   patchFan(id: string, patch: Partial<FanConfig>): void
   setCurve(id: string, curve: CurvePoint[]): void
   setLive(sensors: Sensor[], live: Record<string, FanLive>): void
+  setLcdLive(on: boolean): void
+  setLcdError(e: string | null): void
 }
 
 const newAssignment = (effectId: string): Assignment => ({ effectId, params: defaultParams(effectId), brightness: 100 })
@@ -56,6 +60,8 @@ export const useStore = create<State>()(
       selectedFan: '',
       sensors: [],
       live: {},
+      lcdLive: false,
+      lcdError: null,
 
       async init() {
         const [devices, fanInfo] = await Promise.all([backend.listDevices(), backend.listFans()])
@@ -107,6 +113,8 @@ export const useStore = create<State>()(
       patchFan: (id, patch) => set({ fans: get().fans.map((f) => (f.id === id ? { ...f, ...patch } : f)) }),
       setCurve: (id, curve) => get().patchFan(id, { curve }),
       setLive: (sensors, live) => set({ sensors, live }),
+      setLcdLive: (lcdLive) => set({ lcdLive }),
+      setLcdError: (lcdError) => set({ lcdError }),
     }),
     {
       name: 'lightsfanaction',
@@ -116,6 +124,7 @@ export const useStore = create<State>()(
         syncAll: s.syncAll,
         fans: s.fans,
         selectedFan: s.selectedFan,
+        lcdLive: s.lcdLive,
       }),
     },
   ),

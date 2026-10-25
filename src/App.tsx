@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState } from 'react'
 import { startEngine } from './engine'
+import { startLcdLoop } from './lcdLive'
 import { backend } from './lib/backend'
 import { IS_TAURI } from './lib/hybrid'
 import { FansPage } from './pages/FansPage'
@@ -20,6 +21,7 @@ export default function App() {
     void (async () => {
       await useStore.getState().init()
       startEngine()
+      startLcdLoop()
       // fan control was on last time: bring it back (this shows the UAC prompt again)
       if (IS_TAURI && backend.hwWanted) {
         await backend.enableHw()

@@ -56,7 +56,7 @@ export class HybridBackend implements Backend {
   private hwSet = new Map<string, number>()
 
   constructor() {
-    if (IS_TAURI) setInterval(() => void this.flush(), 33)
+    if (IS_TAURI) setInterval(() => void this.flush(), 50)
   }
 
   get rgbConnected() {
@@ -144,13 +144,14 @@ export class HybridBackend implements Backend {
         this.rgbError = null
         this.rgbDevices = new Map(found.map((d) => [`rgb-${d.index}`, d.index]))
         this.pending.clear()
+        this.sent.clear()
         this.changed()
         if (found.length) {
           return found.map((d): Device => ({
             id: `rgb-${d.index}`,
             name: d.name,
             kind: KIND[d.kind] ?? 'strip',
-            layout: d.cols ? 'grid' : d.kind === 3 || /kraken/i.test(d.name) ? 'ring' : 'strip',
+            layout: d.cols ? 'grid' : d.kind === 3 ? 'ring' : 'strip',
             ledCount: d.led_count,
             cols: d.cols ?? undefined,
             zones: d.zones.map((z, index) => ({
@@ -191,17 +192,32 @@ export class HybridBackend implements Backend {
     this.pending.set(idx, colors.flat())
   }
 
+  private sent = new Map<number, number[]>()
+  private flushing = false
+
   private async flush() {
-    if (!this.pending.size || !this.rgbConnected) return
-    const frames = [...this.pending].map(([i, rgb]) => [i, rgb])
+    // one frame in flight at a time: OpenRGB has no back-pressure, so a slow device (motherboard
+    // controllers, coolers) would otherwise fall seconds behind
+    if (this.flushing || !this.pending.size || !this.rgbConnected) return
+    const frames: [number, number[]][] = []
+    for (const [i, rgb] of this.pending) {
+      const prev = this.sent.get(i)
+      if (!prev || prev.length !== rgb.length || prev.some((v, k) => v !== rgb[k])) frames.push([i, rgb])
+    }
     this.pending.clear()
+    if (!frames.length) return
+    this.flushing = true
     try {
       await invoke('openrgb_update', { frames })
+      for (const [i, rgb] of frames) this.sent.set(i, rgb)
     } catch (e) {
       // the Rust side dropped the connection; the user can retry from the status chip
       this.rgbError = String(e)
       this.rgbDevices.clear()
+      this.sent.clear()
       this.changed()
+    } finally {
+      this.flushing = false
     }
   }
 
