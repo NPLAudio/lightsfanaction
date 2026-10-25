@@ -142,13 +142,14 @@ export class HybridBackend implements Backend {
         }
         if (resized) found = await invoke<RgbDevice[]>('openrgb_connect')
         this.rgbError = null
-        this.rgbDevices = new Map(found.map((d) => [`rgb-${d.index}`, d.index]))
+        const ids = stableIds(found)
+        this.rgbDevices = new Map(found.map((d, k) => [ids[k], d.index]))
         this.pending.clear()
         this.sent.clear()
         this.changed()
         if (found.length) {
           return found.map((d): Device => ({
-            id: `rgb-${d.index}`,
+            id: ids[found.indexOf(d)],
             name: d.name,
             kind: KIND[d.kind] ?? 'strip',
             layout: d.cols ? 'grid' : d.kind === 3 ? 'ring' : 'strip',
@@ -255,4 +256,18 @@ export class HybridBackend implements Backend {
       return { sensors: [], fans: [] }
     }
   }
+}
+
+/**
+ * OpenRGB numbers devices in detection order, which shifts when a device appears or disappears.
+ * Ids built from the name (plus a counter for identical devices) keep saved settings attached.
+ */
+function stableIds(devs: { name: string }[]): string[] {
+  const seen = new Map<string, number>()
+  return devs.map((d) => {
+    const slug = d.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const n = seen.get(slug) ?? 0
+    seen.set(slug, n + 1)
+    return `rgb-${slug}-${n}`
+  })
 }
