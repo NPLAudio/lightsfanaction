@@ -16,15 +16,15 @@ fn main() {
             println!("        zone {:?} kind={} leds={} (min {}, max {})", z.name, z.kind, z.led_count, z.min_leds, z.max_leds);
         }
     }
-    if std::env::args().nth(2).as_deref() == Some("paint") {
-        for d in &devs {
-            let rgb: Vec<u8> = (0..d.led_count).flat_map(|_| [0u8, 0, 255]).collect();
-            c.set_leds(d.index, &rgb).unwrap();
-        }
+    // paint <device> <r> <g> <b>: fill one device with a colour
+    let a: Vec<String> = std::env::args().collect();
+    if a.get(2).map(String::as_str) == Some("paint") {
+        let idx: u32 = a[3].parse().unwrap();
+        let col: Vec<u8> = a[4..7].iter().map(|v| v.parse().unwrap()).collect();
+        let d = devs.iter().find(|d| d.index == idx).expect("no such device");
+        let rgb: Vec<u8> = (0..d.led_count).flat_map(|_| col.clone()).collect();
+        c.set_leds(idx, &rgb).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(500));
-        println!("--- after painting blue");
-        for d in c.devices().expect("devices") {
-            println!("{:>2} {} active={}", d.index, d.name, active(&d));
-        }
+        println!("painted {} ({} leds)", d.name, d.led_count);
     }
 }
