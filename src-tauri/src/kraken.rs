@@ -33,7 +33,23 @@ impl Kraken {
         let hid = api
             .open(VID, PID)
             .map_err(|e| format!("cannot open the Kraken over HID (is NZXT CAM running?): {e}"))?;
-        Ok(Kraken { hid })
+        let k = Kraken { hid };
+        k.drain();
+        Ok(k)
+    }
+
+    /// Drops replies left over from earlier commands so they can't be mistaken for new ones.
+    fn drain(&self) {
+        let mut r = [0u8; REPORT];
+        while matches!(self.hid.read_timeout(&mut r, 0), Ok(n) if n > 0) {}
+    }
+
+    /// Writes a command and returns whatever report comes back next.
+    fn write_read(&self, cmd: &[u8]) -> Result<[u8; REPORT], String> {
+        self.write(cmd)?;
+        let mut r = [0u8; REPORT];
+        let n = self.hid.read_timeout(&mut r, 1000).map_err(|e| format!("hid read: {e}"))?;
+        if n == 0 { Err("Kraken did not answer".into()) } else { Ok(r) }
     }
 
     fn write(&self, cmd: &[u8]) -> Result<(), String> {
@@ -106,7 +122,7 @@ impl Kraken {
         }
 
         // `[0x36, 0x03]` is undocumented but sent by the vendor software before bucket work
-        self.request(&[0x36, 0x03], &[0x37, 0x03]).ok();
+        self.write_read(&[0x36, 0x03])?;
         let mut buckets = Vec::new();
         for i in 0..BUCKETS {
             buckets.push(self.bucket(i)?);
@@ -143,7 +159,7 @@ impl Kraken {
         if r[14] != 1 {
             return Err("Kraken refused to allocate image memory".into());
         }
-        self.write(&[0x36, 0x01, idx])?;
+        self.write_read(&[0x36, 0x01, idx])?;
         self.bulk_write(&payload)?;
         self.write(&[0x36, 0x02])?;
         self.switch_bucket(idx, 4)
@@ -164,13 +180,18 @@ impl Kraken {
             .endpoint::<nusb::transfer::Bulk, nusb::transfer::Out>(BULK_OUT)
             .map_err(|e| format!("bulk endpoint: {e}"))?;
 
-        let mut data = vec![0x12, 0xFA, 0x01, 0xE8, 0xAB, 0xCD, 0xEF, 0x98, 0x76, 0x54, 0x32, 0x10];
-        data.extend_from_slice(&[0x02, 0, 0, 0]); // static image
-        data.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        data.extend_from_slice(payload);
-        for chunk in data.chunks(2 * 1024 * 1024) {
-            let c = ep.transfer_blocking(chunk.to_vec().into(), Duration::from_secs(10));
-            c.status.map_err(|e| format!("image upload failed: {e}"))?;
+        // the header must be its own transfer; the image follows in separate ones
+        let mut header = vec![0x12, 0xFA, 0x01, 0xE8, 0xAB, 0xCD, 0xEF, 0x98, 0x76, 0x54, 0x32, 0x10];
+        header.extend_from_slice(&[0x02, 0, 0, 0]); // static image
+        header.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        let mut send = |bytes: &[u8]| {
+            ep.transfer_blocking(bytes.to_vec().into(), Duration::from_secs(10))
+                .status
+                .map_err(|e| format!("image upload failed: {e}"))
+        };
+        send(&header)?;
+        for chunk in payload.chunks(2 * 1024 * 1024) {
+            send(chunk)?;
         }
         Ok(())
     }
