@@ -93,6 +93,7 @@ export function LightingPage() {
           <div>
             <h1>{dev.name}</h1>
             <p className="muted">{dev.ledCount} LEDs · {dev.layout}{syncAll ? ' · changes apply to all devices' : ''}</p>
+            {dev.note && <p className="muted note">{dev.note}</p>}
           </div>
         </header>
 

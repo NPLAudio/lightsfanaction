@@ -19,6 +19,8 @@ export interface Device {
   ledCount: number
   /** grid only */
   cols?: number
+  /** shown under the device name, e.g. a limitation of its firmware */
+  note?: string
   /** OpenRGB zones; only those with min < max can be resized */
   zones?: Zone[]
 }

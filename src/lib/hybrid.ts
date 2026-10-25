@@ -125,6 +125,39 @@ export class HybridBackend implements Backend {
   }
 
   async listDevices(): Promise<Device[]> {
+    const all = [...(await this.listRgb()), ...(await this.listVia())]
+    return all.length ? all : this.sim.listDevices()
+  }
+
+  private viaPaths = new Map<string, string>()
+  private viaPending = new Map<string, [number, number, number]>()
+  private viaSent = new Map<string, string>()
+
+  /** QMK/VIA keyboards (e.g. Keychron Q-series on stock firmware): one colour for the whole board. */
+  private async listVia(): Promise<Device[]> {
+    this.viaPaths.clear()
+    if (!IS_TAURI) return []
+    try {
+      const found = await invoke<{ path: string; name: string }[]>('via_list')
+      const ids = stableIds(found).map((id) => id.replace('rgb-', 'via-'))
+      return found.map((k, i): Device => {
+        this.viaPaths.set(ids[i], k.path)
+        return {
+          id: ids[i],
+          name: k.name,
+          kind: 'keyboard',
+          layout: 'grid',
+          cols: 18,
+          ledCount: 108,
+          note: 'Stock firmware can only show one colour at a time, so the keyboard shows the average of this preview.',
+        }
+      })
+    } catch {
+      return []
+    }
+  }
+
+  private async listRgb(): Promise<Device[]> {
     if (IS_TAURI) {
       try {
         let found = await invoke<RgbDevice[]>('openrgb_connect')
@@ -170,7 +203,7 @@ export class HybridBackend implements Backend {
         this.changed()
       }
     }
-    return this.sim.listDevices()
+    return []
   }
 
   /** Remembers and applies how many LEDs a resizable zone drives. Re-list devices afterwards. */
@@ -188,9 +221,30 @@ export class HybridBackend implements Backend {
   }
 
   setLeds(id: string, colors: RGB[]) {
+    if (this.viaPaths.has(id)) {
+      const sum = [0, 0, 0]
+      for (const c of colors) for (let k = 0; k < 3; k++) sum[k] += c[k]
+      const n = Math.max(1, colors.length)
+      this.viaPending.set(id, [Math.round(sum[0] / n), Math.round(sum[1] / n), Math.round(sum[2] / n)])
+      return
+    }
     const idx = this.rgbDevices.get(id)
     if (idx === undefined) return this.sim.setLeds(id, colors)
     this.pending.set(idx, colors.flat())
+  }
+
+  private async flushVia() {
+    for (const [id, rgb] of this.viaPending) {
+      const key = rgb.join(',')
+      if (this.viaSent.get(id) === key) continue
+      this.viaSent.set(id, key)
+      try {
+        await invoke('via_color', { path: this.viaPaths.get(id), r: rgb[0], g: rgb[1], b: rgb[2] })
+      } catch {
+        this.viaSent.delete(id) // retry next frame
+      }
+    }
+    this.viaPending.clear()
   }
 
   private sent = new Map<number, number[]>()
@@ -199,7 +253,18 @@ export class HybridBackend implements Backend {
   private async flush() {
     // one frame in flight at a time: OpenRGB has no back-pressure, so a slow device (motherboard
     // controllers, coolers) would otherwise fall seconds behind
-    if (this.flushing || !this.pending.size || !this.rgbConnected) return
+    if (this.flushing) return
+    this.flushing = true
+    try {
+      await this.flushVia()
+      await this.flushRgb()
+    } finally {
+      this.flushing = false
+    }
+  }
+
+  private async flushRgb() {
+    if (!this.pending.size || !this.rgbConnected) return
     const frames: [number, number[]][] = []
     for (const [i, rgb] of this.pending) {
       const prev = this.sent.get(i)
@@ -207,7 +272,6 @@ export class HybridBackend implements Backend {
     }
     this.pending.clear()
     if (!frames.length) return
-    this.flushing = true
     try {
       await invoke('openrgb_update', { frames })
       for (const [i, rgb] of frames) this.sent.set(i, rgb)
@@ -217,8 +281,6 @@ export class HybridBackend implements Backend {
       this.rgbDevices.clear()
       this.sent.clear()
       this.changed()
-    } finally {
-      this.flushing = false
     }
   }
 

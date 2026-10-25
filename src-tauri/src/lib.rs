@@ -1,6 +1,7 @@
 mod hw;
 pub mod kraken;
 pub mod openrgb;
+pub mod via;
 
 use std::sync::Mutex;
 
@@ -75,6 +76,36 @@ async fn kraken_image(request: tauri::ipc::Request<'_>) -> Result<(), String> {
 }
 
 #[derive(Default)]
+struct Keyboards(Mutex<std::collections::HashMap<String, via::Via>>);
+
+#[tauri::command]
+async fn via_list() -> Result<Vec<via::ViaDevice>, String> {
+    via::find()
+}
+
+/// Sets one solid colour on a VIA keyboard (opens it, and remembers its own lighting, on first use).
+#[tauri::command]
+async fn via_color(state: State<'_, Keyboards>, path: String, r: u8, g: u8, b: u8) -> Result<(), String> {
+    let mut map = state.0.lock().map_err(|e| e.to_string())?;
+    if !map.contains_key(&path) {
+        map.insert(path.clone(), via::Via::open(&path)?);
+    }
+    let result = map.get_mut(&path).unwrap().set_color(r, g, b);
+    if result.is_err() {
+        map.remove(&path);
+    }
+    result
+}
+
+#[tauri::command]
+async fn via_restore(state: State<'_, Keyboards>, path: String) -> Result<(), String> {
+    if let Some(mut k) = state.0.lock().map_err(|e| e.to_string())?.remove(&path) {
+        k.restore();
+    }
+    Ok(())
+}
+
+#[derive(Default)]
 struct Hw(Mutex<Option<hw::Client>>);
 
 /// Starts the elevated hardware sidecar. Blocks while Windows shows the UAC prompt.
@@ -116,6 +147,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Rgb::default())
         .manage(Hw::default())
+        .manage(Keyboards::default())
         .invoke_handler(tauri::generate_handler![
             openrgb_connect,
             openrgb_update,
@@ -125,6 +157,9 @@ pub fn run() {
             kraken_display,
             kraken_liquid,
             kraken_image,
+            via_list,
+            via_color,
+            via_restore,
             hw_start,
             hw_apply,
             hw_stop
@@ -133,6 +168,11 @@ pub fn run() {
         .expect("error while building Lights Fan Action")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                if let Ok(mut m) = app.state::<Keyboards>().0.lock() {
+                    for (_, k) in m.iter_mut() {
+                        k.restore();
+                    }
+                }
                 // fans go back to firmware control before we leave
                 if let Ok(mut g) = app.state::<Hw>().0.lock() {
                     if let Some(mut c) = g.take() {
