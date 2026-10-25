@@ -1,4 +1,5 @@
 import type { Backend, Device, DeviceKind, FanInfo, HardwareState, RGB, Sensor } from './types'
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { SimBackend } from './sim'
 
 interface RgbDevice {
@@ -7,6 +8,17 @@ interface RgbDevice {
   kind: number
   led_count: number
   cols: number | null
+  zones: { name: string; led_count: number; min_leds: number; max_leds: number }[]
+}
+
+const ZONES_KEY = 'lfa-zone-sizes'
+const zoneKey = (device: string, zone: string) => `${device}|${zone}`
+function savedZones(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(ZONES_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
 }
 
 const KIND: Record<number, DeviceKind> = { 1: 'ram', 2: 'gpu', 3: 'fan', 4: 'strip', 5: 'keyboard', 6: 'mouse' }
@@ -21,7 +33,7 @@ const HW_FLAG = 'lfa-hw'
 
 export const IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<T>(cmd, args)
 }
@@ -115,7 +127,20 @@ export class HybridBackend implements Backend {
   async listDevices(): Promise<Device[]> {
     if (IS_TAURI) {
       try {
-        const found = await invoke<RgbDevice[]>('openrgb_connect')
+        let found = await invoke<RgbDevice[]>('openrgb_connect')
+        // addressable headers (e.g. motherboard fan lights) report 0 LEDs until told how many
+        const wanted = savedZones()
+        let resized = false
+        for (const d of found) {
+          for (const [zi, z] of d.zones.entries()) {
+            const n = wanted[zoneKey(d.name, z.name)]
+            if (n !== undefined && n !== z.led_count && n >= z.min_leds && n <= z.max_leds) {
+              await invoke('openrgb_resize_zone', { device: d.index, zone: zi, count: n })
+              resized = true
+            }
+          }
+        }
+        if (resized) found = await invoke<RgbDevice[]>('openrgb_connect')
         this.rgbError = null
         this.rgbDevices = new Map(found.map((d) => [`rgb-${d.index}`, d.index]))
         this.pending.clear()
@@ -125,9 +150,16 @@ export class HybridBackend implements Backend {
             id: `rgb-${d.index}`,
             name: d.name,
             kind: KIND[d.kind] ?? 'strip',
-            layout: d.cols ? 'grid' : d.kind === 3 ? 'ring' : 'strip',
+            layout: d.cols ? 'grid' : d.kind === 3 || /kraken/i.test(d.name) ? 'ring' : 'strip',
             ledCount: d.led_count,
             cols: d.cols ?? undefined,
+            zones: d.zones.map((z, index) => ({
+              index,
+              name: z.name,
+              ledCount: z.led_count,
+              min: z.min_leds,
+              max: z.max_leds,
+            })),
           }))
         }
       } catch (e) {
@@ -137,6 +169,20 @@ export class HybridBackend implements Backend {
       }
     }
     return this.sim.listDevices()
+  }
+
+  /** Remembers and applies how many LEDs a resizable zone drives. Re-list devices afterwards. */
+  async resizeZone(device: Device, zone: number, count: number) {
+    const idx = this.rgbDevices.get(device.id)
+    if (idx === undefined) return
+    await invoke('openrgb_resize_zone', { device: idx, zone, count })
+    const saved = savedZones()
+    saved[zoneKey(device.name, device.zones![zone].name)] = count
+    try {
+      localStorage.setItem(ZONES_KEY, JSON.stringify(saved))
+    } catch {
+      /* not persisted */
+    }
   }
 
   setLeds(id: string, colors: RGB[]) {

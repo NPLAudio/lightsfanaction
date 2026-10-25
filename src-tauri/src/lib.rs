@@ -1,5 +1,6 @@
 mod hw;
-mod openrgb;
+pub mod kraken;
+pub mod openrgb;
 
 use std::sync::Mutex;
 
@@ -39,6 +40,38 @@ async fn openrgb_update(state: State<'_, Rgb>, frames: Vec<(u32, Vec<u8>)>) -> R
 async fn openrgb_disconnect(state: State<'_, Rgb>) -> Result<(), String> {
     *state.0.lock().map_err(|e| e.to_string())? = None;
     Ok(())
+}
+
+#[tauri::command]
+async fn openrgb_resize_zone(state: State<'_, Rgb>, device: u32, zone: u32, count: u32) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let client = guard.as_mut().ok_or("OpenRGB is not connected")?;
+    client.resize_zone(device, zone, count)
+}
+
+#[tauri::command]
+async fn kraken_info() -> Result<kraken::LcdInfo, String> {
+    kraken::Kraken::open()?.info()
+}
+
+#[tauri::command]
+async fn kraken_display(brightness: u8, orientation: u8) -> Result<(), String> {
+    kraken::Kraken::open()?.set_display(brightness, orientation)
+}
+
+/// Back to the cooler's built-in liquid temperature screen.
+#[tauri::command]
+async fn kraken_liquid() -> Result<(), String> {
+    kraken::Kraken::open()?.show_liquid()
+}
+
+/// Body is the raw 640x640 image, 4 bytes per pixel (alpha ignored).
+#[tauri::command]
+async fn kraken_image(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => kraken::Kraken::open()?.show_image(bytes),
+        _ => Err("expected a raw image body".into()),
+    }
 }
 
 #[derive(Default)]
@@ -87,6 +120,11 @@ pub fn run() {
             openrgb_connect,
             openrgb_update,
             openrgb_disconnect,
+            openrgb_resize_zone,
+            kraken_info,
+            kraken_display,
+            kraken_liquid,
+            kraken_image,
             hw_start,
             hw_apply,
             hw_stop

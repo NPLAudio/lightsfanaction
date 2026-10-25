@@ -3,6 +3,14 @@ export type RGB = [number, number, number]
 export type DeviceKind = 'keyboard' | 'fan' | 'gpu' | 'ram' | 'strip' | 'mouse'
 export type Layout = 'strip' | 'ring' | 'grid'
 
+export interface Zone {
+  index: number
+  name: string
+  ledCount: number
+  min: number
+  max: number
+}
+
 export interface Device {
   id: string
   name: string
@@ -11,6 +19,8 @@ export interface Device {
   ledCount: number
   /** grid only */
   cols?: number
+  /** OpenRGB zones; only those with min < max can be resized */
+  zones?: Zone[]
 }
 
 export interface Led {

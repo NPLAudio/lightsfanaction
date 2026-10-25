@@ -3,10 +3,11 @@ import { startEngine } from './engine'
 import { backend } from './lib/backend'
 import { IS_TAURI } from './lib/hybrid'
 import { FansPage } from './pages/FansPage'
+import { LcdPage } from './pages/LcdPage'
 import { LightingPage } from './pages/LightingPage'
 import { useStore } from './store'
 
-type Page = 'lighting' | 'fans'
+type Page = 'lighting' | 'fans' | 'lcd'
 
 export default function App() {
   const [page, setPage] = useState<Page>('lighting')
@@ -36,6 +37,7 @@ export default function App() {
         </div>
         <button className={page === 'lighting' ? 'on' : ''} onClick={() => setPage('lighting')}>Lighting</button>
         <button className={page === 'fans' ? 'on' : ''} onClick={() => setPage('fans')}>Fans &amp; Cooling</button>
+        <button className={page === 'lcd' ? 'on' : ''} onClick={() => setPage('lcd')}>Kraken screen</button>
         <div className="grow" />
         <button
           className={`backend ${backend.rgbConnected ? '' : 'sim'}`}
@@ -47,7 +49,7 @@ export default function App() {
         </button>
       </nav>
       <div className="content">
-        {!ready ? <p className="muted pad">Looking for devices…</p> : page === 'lighting' ? <LightingPage /> : <FansPage />}
+        {!ready ? <p className="muted pad">Looking for devices…</p> : page === 'lighting' ? <LightingPage /> : page === 'fans' ? <FansPage /> : <LcdPage />}
       </div>
     </div>
   )

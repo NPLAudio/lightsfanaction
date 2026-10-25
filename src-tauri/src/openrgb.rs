@@ -16,8 +16,20 @@ const REQUEST_CONTROLLER_COUNT: u32 = 0;
 const REQUEST_CONTROLLER_DATA: u32 = 1;
 const REQUEST_PROTOCOL_VERSION: u32 = 40;
 const SET_CLIENT_NAME: u32 = 50;
+const RESIZE_ZONE: u32 = 1000;
 const UPDATE_LEDS: u32 = 1050;
 const SET_CUSTOM_MODE: u32 = 1100;
+
+#[derive(Serialize, Clone, Debug)]
+pub struct ZoneInfo {
+    pub name: String,
+    /// 0 single, 1 linear, 2 matrix
+    pub kind: i32,
+    pub led_count: u32,
+    /// resizable zones (e.g. addressable headers) report min < max
+    pub min_leds: u32,
+    pub max_leds: u32,
+}
 
 #[derive(Serialize, Clone, Debug)]
 pub struct DeviceInfo {
@@ -28,6 +40,7 @@ pub struct DeviceInfo {
     pub led_count: u32,
     /// set when the device exposes a single LED matrix whose cells cover every LED
     pub cols: Option<u32>,
+    pub zones: Vec<ZoneInfo>,
 }
 
 pub struct Client {
@@ -100,6 +113,15 @@ impl Client {
             out.push(parse_device(i, &body, self.proto)?);
         }
         Ok(out)
+    }
+
+    /// Changes how many LEDs an addressable zone drives. The device must be re-listed afterwards.
+    pub fn resize_zone(&mut self, dev: u32, zone: u32, count: u32) -> Result<(), String> {
+        let mut p = Vec::with_capacity(8);
+        p.extend_from_slice(&zone.to_le_bytes());
+        p.extend_from_slice(&count.to_le_bytes());
+        self.in_custom_mode.remove(&dev);
+        self.send(dev, RESIZE_ZONE, &p)
     }
 
     pub fn set_leds(&mut self, dev: u32, rgb: &[u8]) -> Result<(), String> {
@@ -179,9 +201,14 @@ fn parse_device(index: u32, body: &[u8], proto: u32) -> Result<DeviceInfo, Strin
 
     let n_zones = r.u16()?;
     let mut matrix: Option<(u32, u32)> = None;
+    let mut zones = Vec::new();
     for _ in 0..n_zones {
-        r.string()?;
-        r.skip(16)?; // type, leds min/max/count
+        let zname = r.string()?;
+        let zkind = r.u32()? as i32;
+        let zmin = r.u32()?;
+        let zmax = r.u32()?;
+        let zleds = r.u32()?;
+        zones.push(ZoneInfo { name: zname, kind: zkind, led_count: zleds, min_leds: zmin, max_leds: zmax });
         let m = r.u16()? as usize;
         if m > 0 {
             let h = r.u32()?;
@@ -202,7 +229,7 @@ fn parse_device(index: u32, body: &[u8], proto: u32) -> Result<DeviceInfo, Strin
         (Some((w, h)), 1) if w * h == led_count => Some(w),
         _ => None,
     };
-    Ok(DeviceInfo { index, name, kind, led_count, cols })
+    Ok(DeviceInfo { index, name, kind, led_count, cols, zones })
 }
 
 #[cfg(test)]

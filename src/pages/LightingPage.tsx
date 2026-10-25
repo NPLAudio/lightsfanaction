@@ -1,7 +1,52 @@
 import { DeviceCanvas, EffectPreview } from '../components/LedCanvas'
 import { EFFECTS, effectById } from '../lib/effects'
 import type { Device } from '../lib/types'
+import { useState } from 'react'
+import { backend } from '../lib/backend'
 import { useStore } from '../store'
+
+function ZoneSizes({ dev }: { dev: Device }) {
+  const zones = (dev.zones ?? []).filter((z) => z.max > z.min)
+  const [draft, setDraft] = useState<Record<number, number>>({})
+  const [err, setErr] = useState('')
+  if (!zones.length || !backend.rgbConnected) return null
+  const apply = async (zi: number, n: number) => {
+    try {
+      await backend.resizeZone(dev, zi, n)
+      await useStore.getState().init()
+      setErr('')
+    } catch (e) {
+      setErr(String(e))
+    }
+  }
+  return (
+    <div className="panel" style={{ marginBottom: 18 }}>
+      <h2>Addressable headers</h2>
+      <p className="muted note">Tell the app how many LEDs are plugged into each header. 0 means nothing is driven.</p>
+      {zones.map((z) => (
+        <div className="row zone-row" key={z.index}>
+          <label htmlFor={`z-${z.index}`}>{z.name}</label>
+          <input
+            id={`z-${z.index}`}
+            type="number"
+            min={z.min}
+            max={z.max}
+            value={draft[z.index] ?? z.ledCount}
+            onChange={(e) => setDraft({ ...draft, [z.index]: Number(e.target.value) })}
+          />
+          <button
+            className="btn"
+            disabled={(draft[z.index] ?? z.ledCount) === z.ledCount}
+            onClick={() => void apply(z.index, Math.min(z.max, Math.max(z.min, draft[z.index] ?? z.ledCount)))}
+          >
+            Apply
+          </button>
+        </div>
+      ))}
+      {err && <p className="muted note err">{err}</p>}
+    </div>
+  )
+}
 
 const ICON: Record<Device['kind'], string> = {
   keyboard: '⌨', fan: '✺', gpu: '▭', ram: '▤', strip: '━', mouse: '◖',
@@ -54,6 +99,8 @@ export function LightingPage() {
         <div className="stage">
           <DeviceCanvas device={dev} width={big.w} height={big.h} />
         </div>
+
+        <ZoneSizes dev={dev} />
 
         <div className="panel">
           <div className="row">
