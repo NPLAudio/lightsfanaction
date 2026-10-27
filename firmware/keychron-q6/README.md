@@ -8,7 +8,7 @@ small additions, so the app can drive every key.
 - `keychron_q6_ansi_lfa.bin`: the firmware for the **Q6 ANSI, no knob** (`keychron/q6/ansi`,
   USB `3434:0160`). Do not flash it on any other board or layout.
 - `lfa-per-key.patch`: the full difference from Keychron's source (branch `2025q3`, commit
-  `2b493ff95f2665db719b1e95c91babb5036e72f3`). Two changes:
+  `2b493ff95f2665db719b1e95c91babb5036e72f3`). Three changes:
   1. the per-key effect now honors each key's brightness (it used to ignore it, so dark colors
      showed at full brightness);
   2. setting the per-key type also switches the keyboard into the per-key effect, in RAM only;
