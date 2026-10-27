@@ -1,5 +1,6 @@
 import type { Backend, Device, DeviceKind, FanInfo, HardwareState, RGB, Sensor } from './types'
 import type { InvokeArgs } from '@tauri-apps/api/core'
+import { Q6_ANSI_POSITIONS } from './keychronQ6'
 import { SimBackend } from './sim'
 
 interface RgbDevice {
@@ -130,18 +131,34 @@ export class HybridBackend implements Backend {
   }
 
   private viaPaths = new Map<string, string>()
+  private viaPerKey = new Set<string>()
+  private viaFrames = new Map<string, number[]>()
+  private viaFrameSent = new Map<string, number[]>()
   private viaPending = new Map<string, [number, number, number]>()
   private viaSent = new Map<string, string>()
 
   /** QMK/VIA keyboards (e.g. Keychron Q-series on stock firmware): one colour for the whole board. */
   private async listVia(): Promise<Device[]> {
     this.viaPaths.clear()
+    this.viaPerKey.clear()
     if (!IS_TAURI) return []
     try {
-      const found = await invoke<{ path: string; name: string }[]>('via_list')
+      const found = await invoke<{ path: string; name: string; per_key: boolean; led_count: number }[]>('via_list')
       const ids = stableIds(found).map((id) => id.replace('rgb-', 'via-'))
       return found.map((k, i): Device => {
         this.viaPaths.set(ids[i], k.path)
+        const q6 = k.per_key && /Q6/i.test(k.name) && k.led_count === Q6_ANSI_POSITIONS.length
+        if (q6) {
+          this.viaPerKey.add(ids[i])
+          return {
+            id: ids[i],
+            name: k.name,
+            kind: 'keyboard',
+            layout: 'custom',
+            ledCount: k.led_count,
+            positions: Q6_ANSI_POSITIONS.map(([x, y]) => [x / 224, y / 64] as [number, number]),
+          }
+        }
         return {
           id: ids[i],
           name: k.name,
@@ -221,6 +238,10 @@ export class HybridBackend implements Backend {
   }
 
   setLeds(id: string, colors: RGB[]) {
+    if (this.viaPerKey.has(id)) {
+      this.viaFrames.set(id, colors.flat())
+      return
+    }
     if (this.viaPaths.has(id)) {
       const sum = [0, 0, 0]
       for (const c of colors) for (let k = 0; k < 3; k++) sum[k] += c[k]
@@ -234,6 +255,17 @@ export class HybridBackend implements Backend {
   }
 
   private async flushVia() {
+    for (const [id, rgb] of this.viaFrames) {
+      const prev = this.viaFrameSent.get(id)
+      if (prev && prev.length === rgb.length && prev.every((v, k) => v === rgb[k])) continue
+      try {
+        await invoke('via_leds', { path: this.viaPaths.get(id), rgb })
+        this.viaFrameSent.set(id, rgb)
+      } catch {
+        this.viaFrameSent.delete(id) // retry next frame
+      }
+    }
+    this.viaFrames.clear()
     for (const [id, rgb] of this.viaPending) {
       const key = rgb.join(',')
       if (this.viaSent.get(id) === key) continue

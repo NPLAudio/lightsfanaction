@@ -1,0 +1,27 @@
+diff --git a/keyboards/keychron/common/rgb/keychron_rgb.c b/keyboards/keychron/common/rgb/keychron_rgb.c
+index 987adb8..9c8a111 100644
+--- a/keyboards/keychron/common/rgb/keychron_rgb.c
++++ b/keyboards/keychron/common/rgb/keychron_rgb.c
+@@ -174,6 +174,9 @@ static bool per_key_rgb_set_type(uint8_t *data) {
+     if (type >= PER_KEY_RGB_MAX) return false;
+ 
+     per_key_rgb_type = data[0];
++    // lights-fan-action: also switch the matrix to the per-key effect so a host can drive it
++    // without knowing this firmware's effect numbering (RAM only, not saved)
++    rgb_matrix_mode_noeeprom(RGB_MATRIX_CUSTOM_PER_KEY_RGB);
+ 
+     return true;
+ }
+diff --git a/keyboards/keychron/common/rgb/per_key_rgb.c b/keyboards/keychron/common/rgb/per_key_rgb.c
+index d9647c2..25ea689 100644
+--- a/keyboards/keychron/common/rgb/per_key_rgb.c
++++ b/keyboards/keychron/common/rgb/per_key_rgb.c
+@@ -32,7 +32,7 @@ bool per_key_rgb_solid(effect_params_t *params) {
+ 
+     for (uint8_t i = led_min; i < led_max; i++) {
+         hsv     = per_key_led[i];
+-        hsv.v   = rgb_matrix_config.hsv.v;
++        hsv.v   = scale8(hsv.v, rgb_matrix_config.hsv.v); // lights-fan-action: honor per-key brightness
+         RGB rgb = hsv_to_rgb(hsv);
+         rgb_matrix_region_set_color(params->region, i, rgb.r, rgb.g, rgb.b);
+     }

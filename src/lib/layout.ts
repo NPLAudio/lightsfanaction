@@ -3,6 +3,9 @@ import type { Device, Led } from './types'
 const cache = new Map<string, Led[]>()
 
 export function ledsFor(d: Device): Led[] {
+  if (d.layout === 'custom' && d.positions) {
+    return d.positions.map(([x, y], i) => ({ i, n: d.positions!.length, x, y }))
+  }
   const key = `${d.layout}:${d.ledCount}:${d.cols ?? 0}`
   const hit = cache.get(key)
   if (hit) return hit

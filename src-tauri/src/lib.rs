@@ -97,6 +97,20 @@ async fn via_color(state: State<'_, Keyboards>, path: String, r: u8, g: u8, b: u
     result
 }
 
+/// Sets every key on a keyboard with per-key firmware. `rgb` is 3 bytes per LED.
+#[tauri::command]
+async fn via_leds(state: State<'_, Keyboards>, path: String, rgb: Vec<u8>) -> Result<(), String> {
+    let mut map = state.0.lock().map_err(|e| e.to_string())?;
+    if !map.contains_key(&path) {
+        map.insert(path.clone(), via::Via::open(&path)?);
+    }
+    let result = map.get_mut(&path).unwrap().set_leds(&rgb);
+    if result.is_err() {
+        map.remove(&path);
+    }
+    result
+}
+
 #[tauri::command]
 async fn via_restore(state: State<'_, Keyboards>, path: String) -> Result<(), String> {
     if let Some(mut k) = state.0.lock().map_err(|e| e.to_string())?.remove(&path) {
@@ -159,6 +173,7 @@ pub fn run() {
             kraken_image,
             via_list,
             via_color,
+            via_leds,
             via_restore,
             hw_start,
             hw_apply,

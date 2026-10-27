@@ -53,8 +53,8 @@ const ICON: Record<Device['kind'], string> = {
 }
 
 function previewSize(d: Device, big: boolean) {
-  if (!big) return d.layout === 'ring' ? { w: 56, h: 56 } : d.layout === 'grid' ? { w: 120, h: 44 } : { w: 120, h: 28 }
-  return d.layout === 'ring' ? { w: 260, h: 260 } : d.layout === 'grid' ? { w: 720, h: 200 } : { w: 720, h: 90 }
+  if (!big) return d.layout === 'ring' ? { w: 56, h: 56 } : d.layout === 'grid' || d.layout === 'custom' ? { w: 120, h: 44 } : { w: 120, h: 28 }
+  return d.layout === 'ring' ? { w: 260, h: 260 } : d.layout === 'grid' || d.layout === 'custom' ? { w: 720, h: 200 } : { w: 720, h: 90 }
 }
 
 export function LightingPage() {
