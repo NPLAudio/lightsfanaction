@@ -1,5 +1,5 @@
 diff --git a/keyboards/keychron/common/rgb/keychron_rgb.c b/keyboards/keychron/common/rgb/keychron_rgb.c
-index 987adb8..9c8a111 100644
+index 987adb8..914778c 100644
 --- a/keyboards/keychron/common/rgb/keychron_rgb.c
 +++ b/keyboards/keychron/common/rgb/keychron_rgb.c
 @@ -174,6 +174,9 @@ static bool per_key_rgb_set_type(uint8_t *data) {
@@ -12,8 +12,50 @@ index 987adb8..9c8a111 100644
  
      return true;
  }
+@@ -208,6 +211,26 @@ static bool per_key_rgb_set_led_color(uint8_t *data) {
+     return true;
+ }
+ 
++// lights-fan-action: stage a slice of a frame; the frame is applied once its last LED arrives
++extern HSV           per_key_staged[RGB_MATRIX_LED_COUNT];
++extern volatile bool per_key_staged_ready;
++
++static bool lfa_frame_set(uint8_t *data) {
++    uint8_t start = data[0];
++    uint8_t count = data[1];
++
++    if (count > 9 || start + count > RGB_MATRIX_LED_COUNT) return false;
++
++    for (uint8_t i = 0; i < count; i++) {
++        per_key_staged[start + i].h = data[2 + i * 3];
++        per_key_staged[start + i].s = data[3 + i * 3];
++        per_key_staged[start + i].v = data[4 + i * 3];
++    }
++    if (start + count == RGB_MATRIX_LED_COUNT) per_key_staged_ready = true;
++
++    return true;
++}
++
+ static bool mixed_rgb_get_effect_info(uint8_t *data) {
+     data[1] = EFFECT_LAYERS;
+     data[2] = EFFECTS_PER_LAYER;
+@@ -393,6 +416,14 @@ void kc_rgb_matrix_rx(bool usb, uint8_t *data, uint8_t length) {
+             success = mixed_rgb_set_effect_list(&data[2]);
+             break;
+ 
++        case 0x20: // lights-fan-action: staged per-key frame
++            success = lfa_frame_set(&data[2]);
++            break;
++
++        case 0x21: // lights-fan-action: extension version
++            data[3] = 2;
++            break;
++
+         default:
+             data[0] = 0xFF;
+             break;
 diff --git a/keyboards/keychron/common/rgb/per_key_rgb.c b/keyboards/keychron/common/rgb/per_key_rgb.c
-index d9647c2..25ea689 100644
+index d9647c2..371a111 100644
 --- a/keyboards/keychron/common/rgb/per_key_rgb.c
 +++ b/keyboards/keychron/common/rgb/per_key_rgb.c
 @@ -32,7 +32,7 @@ bool per_key_rgb_solid(effect_params_t *params) {
@@ -25,3 +67,20 @@ index d9647c2..25ea689 100644
          RGB rgb = hsv_to_rgb(hsv);
          rgb_matrix_region_set_color(params->region, i, rgb.r, rgb.g, rgb.b);
      }
+@@ -139,7 +139,16 @@ bool per_key_rgb_reactive_splash(effect_params_t *params) {
+     return per_key_rgb_effect_runner_reactive_splash(qsub8(g_last_hit_tracker.count, 1), params, &SPLASH_math);
+ }
+ 
++// lights-fan-action: frames from the host are staged and applied only at the start of a render
++// pass, so a pass never mixes two frames (that showed up as flicker on moving effects)
++HSV           per_key_staged[RGB_MATRIX_LED_COUNT] = {0};
++volatile bool per_key_staged_ready               = false;
++
+ bool per_key_rgb(effect_params_t *params) {
++    if (params->iter == 0 && per_key_staged_ready) {
++        memcpy(per_key_led, per_key_staged, sizeof(per_key_led));
++        per_key_staged_ready = false;
++    }
+     switch (per_key_rgb_type) {
+         case PER_KEY_RGB_BREATHING:
+             return per_key_rgb_breahting(params);

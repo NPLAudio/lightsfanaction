@@ -2,7 +2,7 @@
 
 Keychron's current official firmware already has a per-key lighting command over USB (the one
 their Launcher uses). Older Q6 firmware does not answer it, which is why the app could only set one
-color for the whole keyboard. This folder holds a build of Keychron's official source with two
+color for the whole keyboard. This folder holds a build of Keychron's official source with three
 small additions, so the app can drive every key.
 
 - `keychron_q6_ansi_lfa.bin`: the firmware for the **Q6 ANSI, no knob** (`keychron/q6/ansi`,
@@ -11,7 +11,10 @@ small additions, so the app can drive every key.
   `2b493ff95f2665db719b1e95c91babb5036e72f3`). Two changes:
   1. the per-key effect now honors each key's brightness (it used to ignore it, so dark colors
      showed at full brightness);
-  2. setting the per-key type also switches the keyboard into the per-key effect, in RAM only.
+  2. setting the per-key type also switches the keyboard into the per-key effect, in RAM only;
+  3. a new command pair (`0xA8 0x20` / `0xA8 0x21`, "version 2") stages a frame and applies it all at
+     once at the start of a lighting pass. Without it, moving effects tore and flickered because the
+     keyboard drew half-updated frames.
 - `SHA256SUMS`: checksum of the `.bin`.
 
 Everything the app sends is held in RAM. Unplugging the keyboard brings back its saved lighting.

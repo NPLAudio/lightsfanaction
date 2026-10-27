@@ -27,6 +27,9 @@ const KC_PER_KEY_SET_TYPE: u8 = 0x08;
 const KC_PER_KEY_SET_COLOR: u8 = 0x0A;
 const KC_PER_KEY_SOLID: u8 = 0;
 const KC_PER_PACKET: usize = 9;
+// Added by our firmware patch (version 2): frames are staged, then shown all at once
+const KC_LFA_FRAME_SET: u8 = 0x20;
+const KC_LFA_VERSION: u8 = 0x21;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct ViaDevice {
@@ -53,6 +56,8 @@ pub struct Via {
     per_key: bool,
     leds: usize,
     per_key_on: bool,
+    /// firmware applies a whole frame at once (patched firmware, version 2 or newer)
+    staged: bool,
 }
 
 fn ask(dev: &HidDevice, cmd: &[u8]) -> Result<[u8; 32], String> {
@@ -125,6 +130,8 @@ impl Via {
         let brightness = get(&dev, BRIGHTNESS)?[3];
         let color = get(&dev, COLOR)?;
         let leds = kc_led_count(&dev);
+        let staged = leds.is_some()
+            && ask(&dev, &[KC_RGB, KC_LFA_VERSION]).map_or(false, |r| r[0] == KC_RGB && r[3] >= 2);
         Ok(Via {
             dev,
             saved: Saved { effect, brightness, h: color[3], s: color[4] },
@@ -132,6 +139,7 @@ impl Via {
             per_key: leds.is_some(),
             leds: leds.unwrap_or(0),
             per_key_on: false,
+            staged,
         })
     }
 
@@ -157,7 +165,7 @@ impl Via {
             let count = KC_PER_PACKET.min(n - start);
             let mut out = [0u8; 33];
             out[1] = KC_RGB;
-            out[2] = KC_PER_KEY_SET_COLOR;
+            out[2] = if self.staged { KC_LFA_FRAME_SET } else { KC_PER_KEY_SET_COLOR };
             out[3] = start as u8;
             out[4] = count as u8;
             for i in 0..count {
