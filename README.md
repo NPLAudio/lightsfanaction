@@ -42,6 +42,12 @@ Environment switches for development: `LFA_NO_ELEVATE=1` runs the hardware servi
 - Starting with Windows launches the app minimized to the tray. With fan control on, Windows asks for administrator permission at each sign-in until the service is installed as a scheduled task (planned).
 - The Keychron firmware is a patched build of Keychron's GPLv2 source; `lfa-per-key.patch` is the complete change.
 
+## License
+
+The app is MIT licensed (`LICENSE`). `firmware/keychron-q6/` is GPL-licensed (`firmware/keychron-q6/LICENSE`)
+because it derives from Keychron's QMK firmware. Third-party components and their licenses are listed in
+`THIRD_PARTY_NOTICES.md`.
+
 ## Roadmap
 
 1. Bundle the hardware service with releases and start it without a prompt on every launch.

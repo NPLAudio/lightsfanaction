@@ -3,6 +3,7 @@ name = "lightsfanaction"
 version = "0.1.0"
 description = "Open-source RGB lighting and fan control"
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "lightsfanaction_lib"

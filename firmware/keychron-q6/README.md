@@ -19,6 +19,12 @@ small additions, so the app can drive every key.
 
 Everything the app sends is held in RAM. Unplugging the keyboard brings back its saved lighting.
 
+## License
+
+This folder is a derivative of Keychron's `qmk_firmware` (GPL-2.0-or-later) and is licensed under the GPL,
+unlike the rest of the repository (MIT). The full text is in `LICENSE` here. The corresponding source for
+the `.bin` is Keychron's commit named above plus `lfa-per-key.patch`.
+
 ## Before you flash
 
 - Flashing replaces the keyboard's firmware. The chip's built-in bootloader cannot be overwritten,
