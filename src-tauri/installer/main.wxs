@@ -131,7 +131,11 @@
                       ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File .\register-tasks.ps1" />
         <CustomAction Id="RemoveTasks" Directory="INSTALLDIR" Execute="deferred" Impersonate="no" Return="ignore"
                       ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File .\remove-tasks.ps1" />
+        <Property Id="LOCK_LHM" Value="1" />
+        <CustomAction Id="LockLhm" Directory="INSTALLDIR" Execute="deferred" Impersonate="no" Return="ignore"
+                      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File .\lock-lhm.ps1" />
         <InstallExecuteSequence>
+            <Custom Action="LockLhm" Before="RegisterTasks"><![CDATA[NOT REMOVE AND HAS_LHM AND LOCK_LHM = "1"]]></Custom>
             <Custom Action="RegisterTasks" Before="InstallFinalize">NOT REMOVE</Custom>
             <Custom Action="RemoveTasks" Before="RemoveFiles">(REMOVE = "ALL") AND NOT UPGRADINGPRODUCTCODE</Custom>
         </InstallExecuteSequence>
@@ -193,8 +197,11 @@
                     <Condition Action="hide">HAS_LHM</Condition>
                 </Control>
 
-                <Control Id="Note" Type="Text" X="25" Y="184" Width="335" Height="24" Transparent="yes" NoPrefix="yes" Text="Installed one just now? Close this installer and run it again so it is found." />
-                <Control Id="Override" Type="CheckBox" X="25" Y="212" Width="335" Height="17" Property="PREREQ_OVERRIDE" CheckBoxValue="1" Text="They are installed somewhere else; continue anyway" />
+                <Control Id="LockLhm" Type="CheckBox" X="25" Y="176" Width="335" Height="15" Property="LOCK_LHM" CheckBoxValue="1" Text="Make LibreHardwareMonitor's folder admin-only (fan control needs it)">
+                    <Condition Action="hide">NOT HAS_LHM</Condition>
+                </Control>
+                <Control Id="Note" Type="Text" X="25" Y="194" Width="335" Height="16" Transparent="yes" NoPrefix="yes" Text="Installed one just now? Close this installer and run it again so it is found." />
+                <Control Id="Override" Type="CheckBox" X="25" Y="214" Width="335" Height="17" Property="PREREQ_OVERRIDE" CheckBoxValue="1" Text="They are installed somewhere else; continue anyway" />
             </Dialog>
         </UI>
 

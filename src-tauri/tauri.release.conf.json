@@ -10,7 +10,8 @@
     "resources": {
       "../sidecar-publish/": "sidecar/",
       "installer/register-tasks.ps1": "register-tasks.ps1",
-      "installer/remove-tasks.ps1": "remove-tasks.ps1"
+      "installer/remove-tasks.ps1": "remove-tasks.ps1",
+      "installer/lock-lhm.ps1": "lock-lhm.ps1"
     },
     "windows": {
       "webviewInstallMode": { "type": "skip" },

@@ -27,7 +27,7 @@ Download the MSI from the releases page and run it. Nothing third-party is inclu
 | --- | --- | --- |
 | The window | [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | Already part of Windows 11. |
 | Lighting | [OpenRGB](https://openrgb.org/releases.html) | Turn on its *SDK Server* (port 6742). For RAM lighting OpenRGB also needs the PawnIO driver. |
-| Fan control | [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest) | Unzip `LibreHardwareMonitor.zip` to `C:\Program Files\LibreHardwareMonitor`. It must be in a folder only administrators can change (the fan service runs with administrator rights and will not load libraries from anywhere else). Elsewhere? Set its folder under Settings, Fans. |
+| Fan control | [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest) | Unzip `LibreHardwareMonitor.zip` to `C:\Program Files\LibreHardwareMonitor`. It must be in a folder only administrators can change (the fan service runs with administrator rights and will not load libraries from anywhere else). The installer offers to set that up for you. Elsewhere? Set its folder under Settings, Fans. |
 
 **No prompt each time.** Fan control needs administrator rights. The installer (which asks for permission once) registers two on-demand scheduled tasks, "Lights Fan Action" and "Lights Fan Action (tray)". Starting the app, from the Start menu or at sign-in, hands over to the matching task, which runs it elevated without a prompt. Only members of the Administrators group can use the tasks. If they are missing, or on a standard account, the app starts as before and asks when it needs to.
 

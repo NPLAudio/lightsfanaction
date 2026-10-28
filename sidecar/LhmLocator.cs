@@ -34,6 +34,8 @@ namespace LfaHw
         /// <summary>A folder with LibreHardwareMonitor in it that was refused because ordinary programs can change it.</summary>
         public static string? Rejected { get; private set; }
 
+        static string? RejectedWhy;
+
         public static bool Elevated =>
             new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
@@ -89,7 +91,7 @@ namespace LfaHw
                 if (string.IsNullOrWhiteSpace(d) || !File.Exists(Path.Combine(d!, LibraryFile))) continue;
                 if (elevated && !OnlyAdminsCanChange(d!))
                 {
-                    Rejected ??= d;
+                    if (Rejected is null) { Rejected = d; RejectedWhy = Why; }
                     continue;
                 }
                 return d;
@@ -113,6 +115,16 @@ namespace LfaHw
         /// True when only SYSTEM, administrators and the installer can add, replace or remove files in the
         /// folder, and nobody else can swap out any folder above it.
         /// </summary>
+        static string Name(SecurityIdentifier? sid)
+        {
+            if (sid is null) return "an unknown account";
+            try { return sid.Translate(typeof(NTAccount)).Value; }
+            catch (Exception e) when (e is IdentityNotMappedException or SystemException) { return sid.Value; }
+        }
+
+        /// <summary>Why the last folder checked by <see cref="OnlyAdminsCanChange"/> was refused.</summary>
+        public static string? Why { get; private set; }
+
         public static bool OnlyAdminsCanChange(string path)
         {
             try
@@ -122,7 +134,11 @@ namespace LfaHw
                 {
                     var sec = d.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
                     var owner = sec.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-                    if (owner is null || !Trusted.Contains(owner)) return false;
+                    if (owner is null || !Trusted.Contains(owner))
+                    {
+                        Why = $"{d.FullName} is owned by {Name(owner)}";
+                        return false;
+                    }
 
                     // the folder itself must also refuse new files; above it, being able to create siblings is normal
                     var bad = target ? Replaces | Plants : Replaces;
@@ -132,7 +148,11 @@ namespace LfaHw
                         // inherit-only rules apply to what is inside the folder, which is checked on its own
                         if ((r.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue;
                         if (Trusted.Contains((SecurityIdentifier)r.IdentityReference)) continue;
-                        if ((r.FileSystemRights & bad) != 0) return false;
+                        if ((r.FileSystemRights & bad) != 0)
+                        {
+                            Why = $"{Name((SecurityIdentifier)r.IdentityReference)} can change {d.FullName}";
+                            return false;
+                        }
                     }
                     target = false;
                 }
@@ -146,7 +166,7 @@ namespace LfaHw
 
         public static string Describe(Exception e) =>
             Dir is not null ? $"LibreHardwareMonitor in {Dir} could not be loaded: {e.Message}"
-            : Rejected is not null ? $"LibreHardwareMonitor was found in {Rejected}, but regular programs can change that folder. Fan control runs with administrator rights, so move LibreHardwareMonitor to a folder only administrators can change, such as C:\\Program Files\\LibreHardwareMonitor."
+            : Rejected is not null ? $"LibreHardwareMonitor was found in {Rejected}, but regular programs can change it ({RejectedWhy ?? "permissions could not be read"}). Fan control runs with administrator rights, so only administrators may be able to change that folder. Re-run the installer and tick the admin-only option, or fix the folder's permissions."
             : "LibreHardwareMonitor was not found. Install it (see the project page) or set its folder in Settings.";
     }
 }
