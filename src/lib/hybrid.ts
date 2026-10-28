@@ -115,7 +115,18 @@ export class HybridBackend implements Backend {
   }
 
   async listDevices(): Promise<Device[]> {
-    const all = [...(await this.listRgb()), ...(await this.listVia())]
+    const rgb = await this.listRgb()
+    const via = await this.listVia()
+
+    // Newer OpenRGB builds list the same Keychron keyboard we can already talk to directly. One keyboard
+    // must not appear twice, and two programs must not both drive it: keep the per-key direct connection
+    // (real key positions, whole-frame updates), otherwise keep whichever of the two is richer.
+    const same = (a: string, b: string) => norm(a) === norm(b)
+    const perKey = via.filter((v) => v.layout === 'custom')
+    const rgbKept = rgb.filter((d) => !perKey.some((v) => same(v.name, d.name)))
+    const viaKept = via.filter((v) => v.layout === 'custom' || !rgbKept.some((d) => same(v.name, d.name)))
+
+    const all = [...rgbKept, ...viaKept]
     return all.length || !this.simActive ? all : this.sim.listDevices()
   }
 
@@ -353,6 +364,8 @@ export class HybridBackend implements Backend {
     }
   }
 }
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '')
 
 /**
  * OpenRGB numbers devices in detection order, which shifts when a device appears or disappears.
