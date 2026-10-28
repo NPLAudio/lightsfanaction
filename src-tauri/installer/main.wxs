@@ -109,13 +109,8 @@
             <DirectorySearch Id="LhmPf86" Path="[ProgramFilesFolder]LibreHardwareMonitor">
                 <FileSearch Id="LhmLibPf86" Name="LibreHardwareMonitorLib.dll" />
             </DirectorySearch>
-            <DirectorySearch Id="LhmLocal" Path="[LocalAppDataFolder]Programs\LibreHardwareMonitor">
-                <FileSearch Id="LhmLibLocal" Name="LibreHardwareMonitorLib.dll" />
-            </DirectorySearch>
-            <!-- winget unpacks the portable build into a per-package folder -->
-            <DirectorySearch Id="LhmWinget" Path="[LocalAppDataFolder]Microsoft\WinGet\Packages" Depth="1">
-                <FileSearch Id="LhmLibWinget" Name="LibreHardwareMonitorLib.dll" />
-            </DirectorySearch>
+            <!-- only folders under Program Files: fan control runs as administrator, and the service refuses to
+                 load libraries from a folder that regular programs can change -->
         </Property>
 
         <Property Id="WV2_STATUS" Value="Not found" />
@@ -129,6 +124,17 @@
         <CustomAction Id="OpenWv2" Directory="TARGETDIR" ExeCommand="rundll32.exe url.dll,FileProtocolHandler https://developer.microsoft.com/microsoft-edge/webview2/" Return="asyncNoWait" />
         <CustomAction Id="OpenOrgb" Directory="TARGETDIR" ExeCommand="rundll32.exe url.dll,FileProtocolHandler https://openrgb.org/releases.html" Return="asyncNoWait" />
         <CustomAction Id="OpenLhm" Directory="TARGETDIR" ExeCommand="rundll32.exe url.dll,FileProtocolHandler https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest" Return="asyncNoWait" />
+
+        <!-- Fan control needs administrator rights. Two on-demand scheduled tasks start the app elevated, so
+             Windows does not ask every time it runs (see src/elevate.rs). -->
+        <CustomAction Id="RegisterTasks" Directory="INSTALLDIR" Execute="deferred" Impersonate="no" Return="check"
+                      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File .\register-tasks.ps1" />
+        <CustomAction Id="RemoveTasks" Directory="INSTALLDIR" Execute="deferred" Impersonate="no" Return="ignore"
+                      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File .\remove-tasks.ps1" />
+        <InstallExecuteSequence>
+            <Custom Action="RegisterTasks" Before="InstallFinalize">NOT REMOVE</Custom>
+            <Custom Action="RemoveTasks" Before="RemoveFiles">(REMOVE = "ALL") AND NOT UPGRADINGPRODUCTCODE</Custom>
+        </InstallExecuteSequence>
 
         <!-- launch app checkbox -->
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />

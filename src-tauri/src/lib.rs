@@ -1,3 +1,4 @@
+mod elevate;
 mod hw;
 pub mod kraken;
 pub mod openrgb;
@@ -228,6 +229,11 @@ async fn hw_stop(state: State<'_, Hw>) -> Result<(), String> {
 }
 
 pub fn run() {
+    // hand over to the elevated copy so fan control needs no prompt (release builds with the installer's tasks)
+    #[cfg(not(debug_assertions))]
+    if std::env::var_os("LFA_NO_ELEVATE").is_none() && elevate::relaunch_via_task() {
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_autostart::init(

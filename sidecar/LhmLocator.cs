@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 // lets the C# compiler run LhmLocator.Init when the program loads, on runtimes that predate the attribute
 namespace System.Runtime.CompilerServices
@@ -18,12 +20,22 @@ namespace LfaHw
     /// LibreHardwareMonitor is not shipped with this program. It is installed separately by the user, and its
     /// assemblies are loaded from wherever it lives. The folder comes from `--lhm-dir`, the LFA_LHM_DIR
     /// environment variable, or a handful of standard places.
+    ///
+    /// This program runs with administrator rights, and loading a library runs its code. So when elevated it
+    /// only loads from a folder that ordinary programs cannot change; otherwise anything running as the user
+    /// could drop a library there and have it run as administrator.
     /// </summary>
     static class LhmLocator
     {
         public const string LibraryFile = "LibreHardwareMonitorLib.dll";
 
         public static string? Dir { get; private set; }
+
+        /// <summary>A folder with LibreHardwareMonitor in it that was refused because ordinary programs can change it.</summary>
+        public static string? Rejected { get; private set; }
+
+        public static bool Elevated =>
+            new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
         [ModuleInitializer]
         internal static void Init()
@@ -70,11 +82,71 @@ namespace LfaHw
                 catch (IOException) { /* unreadable: skip */ }
                 catch (UnauthorizedAccessException) { }
             }
-            return candidates.FirstOrDefault(d => !string.IsNullOrWhiteSpace(d) && File.Exists(Path.Combine(d, LibraryFile)));
+
+            var elevated = Elevated;
+            foreach (var d in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(d) || !File.Exists(Path.Combine(d!, LibraryFile))) continue;
+                if (elevated && !OnlyAdminsCanChange(d!))
+                {
+                    Rejected ??= d;
+                    continue;
+                }
+                return d;
+            }
+            return null;
         }
 
-        public static string Describe(Exception e) => Dir is null
-            ? "LibreHardwareMonitor was not found. Install it (see the project page) or set its folder in Settings."
-            : $"LibreHardwareMonitor in {Dir} could not be loaded: {e.Message}";
+        static readonly SecurityIdentifier[] Trusted =
+        {
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+            new SecurityIdentifier(WellKnownSidType.CreatorOwnerSid, null),
+            new SecurityIdentifier("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"), // TrustedInstaller
+        };
+
+        const FileSystemRights Replaces = FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles
+            | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+        const FileSystemRights Plants = FileSystemRights.WriteData | FileSystemRights.AppendData | FileSystemRights.CreateFiles;
+
+        /// <summary>
+        /// True when only SYSTEM, administrators and the installer can add, replace or remove files in the
+        /// folder, and nobody else can swap out any folder above it.
+        /// </summary>
+        public static bool OnlyAdminsCanChange(string path)
+        {
+            try
+            {
+                var target = true;
+                for (var d = new DirectoryInfo(Path.GetFullPath(path)); d is not null; d = d.Parent)
+                {
+                    var sec = d.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+                    var owner = sec.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+                    if (owner is null || !Trusted.Contains(owner)) return false;
+
+                    // the folder itself must also refuse new files; above it, being able to create siblings is normal
+                    var bad = target ? Replaces | Plants : Replaces;
+                    foreach (FileSystemAccessRule r in sec.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                    {
+                        if (r.AccessControlType != AccessControlType.Allow) continue;
+                        // inherit-only rules apply to what is inside the folder, which is checked on its own
+                        if ((r.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue;
+                        if (Trusted.Contains((SecurityIdentifier)r.IdentityReference)) continue;
+                        if ((r.FileSystemRights & bad) != 0) return false;
+                    }
+                    target = false;
+                }
+                return true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or SystemException)
+            {
+                return false; // cannot tell: treat as unsafe
+            }
+        }
+
+        public static string Describe(Exception e) =>
+            Dir is not null ? $"LibreHardwareMonitor in {Dir} could not be loaded: {e.Message}"
+            : Rejected is not null ? $"LibreHardwareMonitor was found in {Rejected}, but regular programs can change that folder. Fan control runs with administrator rights, so move LibreHardwareMonitor to a folder only administrators can change, such as C:\\Program Files\\LibreHardwareMonitor."
+            : "LibreHardwareMonitor was not found. Install it (see the project page) or set its folder in Settings.";
     }
 }

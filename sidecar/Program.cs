@@ -21,6 +21,13 @@ using System.Web.Script.Serialization;
 using LfaHw;
 using LibreHardwareMonitor.Hardware;
 
+// `lfa-hw --check-dir <folder>` says whether the folder is safe to load libraries from while elevated
+if (args.Length == 2 && args[0] == "--check-dir")
+{
+    Console.WriteLine(LhmLocator.OnlyAdminsCanChange(args[1]) ? "admin-only" : "changeable by regular programs");
+    return 0;
+}
+
 string? token = null, portFile = null;
 int parentPid = 0;
 for (int i = 0; i < args.Length - 1; i++)

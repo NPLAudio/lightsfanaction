@@ -49,7 +49,8 @@ impl Client {
         let _ = std::fs::remove_file(&port_file);
         let pid = std::process::id().to_string();
 
-        if std::env::var_os("LFA_NO_ELEVATE").is_some() {
+        // already elevated (started through the installer's task): the service inherits it, no prompt
+        if std::env::var_os("LFA_NO_ELEVATE").is_some() || crate::elevate::is_elevated() {
             Command::new(&exe)
                 .args(["--token", &tok, "--port-file"])
                 .arg(&port_file)

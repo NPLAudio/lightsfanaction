@@ -8,7 +8,9 @@
     "longDescription": "Open-source RGB lighting and fan control: effects, temperature-driven fan curves with calibration, a Kraken cooler screen, and per-key keyboard lighting.",
     "licenseFile": "installer/LICENSE.rtf",
     "resources": {
-      "../sidecar-publish/": "sidecar/"
+      "../sidecar-publish/": "sidecar/",
+      "installer/register-tasks.ps1": "register-tasks.ps1",
+      "installer/remove-tasks.ps1": "remove-tasks.ps1"
     },
     "windows": {
       "webviewInstallMode": { "type": "skip" },

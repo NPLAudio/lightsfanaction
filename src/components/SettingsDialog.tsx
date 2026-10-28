@@ -105,7 +105,8 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
               />
               <p className="text-sm text-muted-foreground">
                 Fan control reads LibreHardwareMonitor, which is installed separately. Only fill this in if it lives
-                somewhere unusual; it is used the next time fan control starts.
+                somewhere unusual. Because fan control runs with administrator rights it must be a folder only
+                administrators can change, such as one under Program Files.
               </p>
             </div>
             <Separator />
