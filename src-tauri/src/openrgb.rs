@@ -18,6 +18,30 @@ const REQUEST_PROTOCOL_VERSION: u32 = 40;
 const SET_CLIENT_NAME: u32 = 50;
 const RESIZE_ZONE: u32 = 1000;
 const UPDATE_LEDS: u32 = 1050;
+const UPDATE_MODE: u32 = 1101;
+
+const MODE_FLAG_HAS_SPEED: u32 = 1 << 0;
+const MODE_FLAG_HAS_BRIGHTNESS: u32 = 1 << 4;
+const COLOR_MODE_MODE_SPECIFIC: u32 = 2;
+
+/// One lighting mode of a device (OpenRGB's mode_t), as reported by the server.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModeInfo {
+    pub name: String,
+    pub value: u32,
+    pub flags: u32,
+    pub speed_min: u32,
+    pub speed_max: u32,
+    pub brightness_min: u32,
+    pub brightness_max: u32,
+    pub colors_min: u32,
+    pub colors_max: u32,
+    pub speed: u32,
+    pub brightness: u32,
+    pub direction: u32,
+    pub color_mode: u32,
+    pub colors: Vec<[u8; 3]>,
+}
 const SET_CUSTOM_MODE: u32 = 1100;
 
 #[derive(Serialize, Clone, Debug)]
@@ -43,12 +67,15 @@ pub struct DeviceInfo {
     pub zones: Vec<ZoneInfo>,
     pub modes: Vec<String>,
     pub active_mode: u32,
+    #[serde(skip)]
+    pub mode_info: Vec<ModeInfo>,
 }
 
 pub struct Client {
     stream: TcpStream,
     proto: u32,
     in_custom_mode: HashSet<u32>,
+    modes: std::collections::HashMap<u32, Vec<ModeInfo>>,
 }
 
 impl Client {
@@ -64,7 +91,7 @@ impl Client {
         stream.set_read_timeout(Some(TIMEOUT)).ok();
         stream.set_write_timeout(Some(TIMEOUT)).ok();
 
-        let mut c = Client { stream, proto: 0, in_custom_mode: HashSet::new() };
+        let mut c = Client { stream, proto: 0, in_custom_mode: HashSet::new(), modes: Default::default() };
         c.send(0, REQUEST_PROTOCOL_VERSION, &MAX_PROTO.to_le_bytes())?;
         let body = c.recv(REQUEST_PROTOCOL_VERSION)?;
         let server = u32::from_le_bytes(body.get(..4).ok_or("short protocol reply")?.try_into().unwrap());
@@ -112,7 +139,9 @@ impl Client {
         for i in 0..count {
             self.send(i, REQUEST_CONTROLLER_DATA, &self.proto.to_le_bytes())?;
             let body = self.recv(REQUEST_CONTROLLER_DATA)?;
-            out.push(parse_device(i, &body, self.proto)?);
+            let dev = parse_device(i, &body, self.proto)?;
+            self.modes.insert(i, dev.mode_info.clone());
+            out.push(dev);
         }
         Ok(out)
     }
@@ -124,6 +153,57 @@ impl Client {
         p.extend_from_slice(&count.to_le_bytes());
         self.in_custom_mode.remove(&dev);
         self.send(dev, RESIZE_ZONE, &p)
+    }
+
+    /// Switches a device to one of its own built-in effects. The device then animates by itself, so no
+    /// frames have to be streamed (slow devices cannot take them anyway). `speed` and `brightness` are
+    /// 0 to 1 of the mode's own range; `colors` apply to modes that take their own colors. A later
+    /// `set_leds` puts the device back into direct mode.
+    pub fn set_mode(&mut self, dev: u32, name: &str, speed: Option<f32>, brightness: Option<f32>, colors: &[[u8; 3]]) -> Result<(), String> {
+        let list = self.modes.get(&dev).ok_or("device modes are unknown; list devices first")?;
+        let (idx, base) = list
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("this device has no mode called {name}"))?;
+        let mut m = base.clone();
+        if let (Some(s), true) = (speed, m.flags & MODE_FLAG_HAS_SPEED != 0) {
+            m.speed = lerp(m.speed_min, m.speed_max, s);
+        }
+        if let (Some(b), true) = (brightness, m.flags & MODE_FLAG_HAS_BRIGHTNESS != 0) {
+            m.brightness = lerp(m.brightness_min, m.brightness_max, b);
+        }
+        if m.color_mode == COLOR_MODE_MODE_SPECIFIC && !colors.is_empty() {
+            let mut cs: Vec<[u8; 3]> = colors.iter().copied().take(m.colors_max.max(1) as usize).collect();
+            while (cs.len() as u32) < m.colors_min {
+                cs.push(*cs.last().unwrap());
+            }
+            // a mode with no brightness control of its own is dimmed through its colors instead
+            if let (Some(b), true) = (brightness, m.flags & MODE_FLAG_HAS_BRIGHTNESS == 0) {
+                for c in cs.iter_mut() {
+                    for ch in c.iter_mut() {
+                        *ch = (*ch as f32 * b.clamp(0.0, 1.0)).round() as u8;
+                    }
+                }
+            }
+            m.colors = cs;
+        }
+        let body = encode_mode(&m, self.proto);
+        let mut p = Vec::with_capacity(8 + body.len());
+        p.extend_from_slice(&((8 + body.len()) as u32).to_le_bytes());
+        p.extend_from_slice(&(idx as u32).to_le_bytes());
+        p.extend_from_slice(&body);
+        self.in_custom_mode.remove(&dev);
+        self.send(dev, UPDATE_MODE, &p)
+    }
+
+    /// Round trip through the server's request queue. The server handles one packet at a time, so a
+    /// long time here means it is behind on frames we already sent.
+    pub fn ping(&mut self) -> Result<std::time::Duration, String> {
+        let started = std::time::Instant::now();
+        self.send(0, REQUEST_CONTROLLER_COUNT, &[])?;
+        self.recv(REQUEST_CONTROLLER_COUNT)?;
+        Ok(started.elapsed())
     }
 
     pub fn set_leds(&mut self, dev: u32, rgb: &[u8]) -> Result<(), String> {
@@ -162,12 +242,84 @@ impl Reader<'_> {
     fn skip(&mut self, n: usize) -> Result<(), String> {
         self.take(n).map(|_| ())
     }
+    fn mode(&mut self, proto: u32) -> Result<ModeInfo, String> {
+        let name = self.string()?;
+        let value = self.u32()?;
+        let flags = self.u32()?;
+        let speed_min = self.u32()?;
+        let speed_max = self.u32()?;
+        let (brightness_min, brightness_max) = if proto >= 3 { (self.u32()?, self.u32()?) } else { (0, 0) };
+        let colors_min = self.u32()?;
+        let colors_max = self.u32()?;
+        let speed = self.u32()?;
+        let brightness = if proto >= 3 { self.u32()? } else { 0 };
+        let direction = self.u32()?;
+        let color_mode = self.u32()?;
+        let n = self.u16()? as usize;
+        let mut colors = Vec::with_capacity(n);
+        for _ in 0..n {
+            let c = self.take(4)?;
+            colors.push([c[0], c[1], c[2]]);
+        }
+        Ok(ModeInfo {
+            name,
+            value,
+            flags,
+            speed_min,
+            speed_max,
+            brightness_min,
+            brightness_max,
+            colors_min,
+            colors_max,
+            speed,
+            brightness,
+            direction,
+            color_mode,
+            colors,
+        })
+    }
     /// u16 length (including the trailing NUL) followed by that many bytes
     fn string(&mut self) -> Result<String, String> {
         let n = self.u16()? as usize;
         let s = self.take(n)?;
         Ok(String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or(&[])).into_owned())
     }
+}
+
+fn push_str(out: &mut Vec<u8>, s: &str) {
+    out.extend_from_slice(&((s.len() + 1) as u16).to_le_bytes());
+    out.extend_from_slice(s.as_bytes());
+    out.push(0);
+}
+
+/// The wire form of a mode, the inverse of `Reader::mode`.
+fn encode_mode(m: &ModeInfo, proto: u32) -> Vec<u8> {
+    let mut o = Vec::new();
+    push_str(&mut o, &m.name);
+    for v in [m.value, m.flags, m.speed_min, m.speed_max] {
+        o.extend_from_slice(&v.to_le_bytes());
+    }
+    if proto >= 3 {
+        o.extend_from_slice(&m.brightness_min.to_le_bytes());
+        o.extend_from_slice(&m.brightness_max.to_le_bytes());
+    }
+    o.extend_from_slice(&m.colors_min.to_le_bytes());
+    o.extend_from_slice(&m.colors_max.to_le_bytes());
+    o.extend_from_slice(&m.speed.to_le_bytes());
+    if proto >= 3 {
+        o.extend_from_slice(&m.brightness.to_le_bytes());
+    }
+    o.extend_from_slice(&m.direction.to_le_bytes());
+    o.extend_from_slice(&m.color_mode.to_le_bytes());
+    o.extend_from_slice(&(m.colors.len() as u16).to_le_bytes());
+    for c in &m.colors {
+        o.extend_from_slice(&[c[0], c[1], c[2], 0]);
+    }
+    o
+}
+
+fn lerp(min: u32, max: u32, t: f32) -> u32 {
+    (min as f32 + (max as f32 - min as f32) * t.clamp(0.0, 1.0)).round() as u32
 }
 
 fn parse_device(index: u32, body: &[u8], proto: u32) -> Result<DeviceInfo, String> {
@@ -184,23 +336,11 @@ fn parse_device(index: u32, body: &[u8], proto: u32) -> Result<DeviceInfo, Strin
 
     let n_modes = r.u16()?;
     let active_mode = r.u32()?;
-    let mut modes = Vec::new();
+    let mut mode_info = Vec::new();
     for _ in 0..n_modes {
-        modes.push(r.string()?);
-        // value, flags, speed min/max
-        r.skip(16)?;
-        if proto >= 3 {
-            r.skip(8)?; // brightness min/max
-        }
-        r.skip(8)?; // colors min/max
-        r.skip(4)?; // speed
-        if proto >= 3 {
-            r.skip(4)?; // brightness
-        }
-        r.skip(8)?; // direction, color mode
-        let nc = r.u16()? as usize;
-        r.skip(nc * 4)?;
+        mode_info.push(r.mode(proto)?);
     }
+    let modes: Vec<String> = mode_info.iter().map(|m| m.name.clone()).collect();
 
     let n_zones = r.u16()?;
     let mut matrix: Option<(u32, u32)> = None;
@@ -232,7 +372,7 @@ fn parse_device(index: u32, body: &[u8], proto: u32) -> Result<DeviceInfo, Strin
         (Some((w, h)), 1) if w * h == led_count => Some(w),
         _ => None,
     };
-    Ok(DeviceInfo { index, name, kind, led_count, cols, zones, modes, active_mode })
+    Ok(DeviceInfo { index, name, kind, led_count, cols, zones, modes, active_mode, mode_info })
 }
 
 #[cfg(test)]
@@ -266,6 +406,32 @@ mod tests {
         b.extend_from_slice(&0u16.to_le_bytes()); // no segments
         b.extend_from_slice(&6u16.to_le_bytes()); // 6 leds
         b
+    }
+
+    #[test]
+    fn mode_survives_a_round_trip() {
+        let m = ModeInfo {
+            name: "Rainbow Wave".into(),
+            value: 3,
+            flags: MODE_FLAG_HAS_SPEED | MODE_FLAG_HAS_BRIGHTNESS,
+            speed_min: 10,
+            speed_max: 1,
+            brightness_min: 0,
+            brightness_max: 100,
+            colors_min: 1,
+            colors_max: 4,
+            speed: 5,
+            brightness: 80,
+            direction: 2,
+            color_mode: COLOR_MODE_MODE_SPECIFIC,
+            colors: vec![[1, 2, 3], [250, 251, 252]],
+        };
+        let bytes = encode_mode(&m, 4);
+        let mut r = Reader { b: &bytes, p: 0 };
+        assert_eq!(r.mode(4).unwrap(), m);
+        assert_eq!(r.p, bytes.len());
+        assert_eq!(lerp(10, 1, 0.0), 10);
+        assert_eq!(lerp(10, 1, 1.0), 1);
     }
 
     #[test]

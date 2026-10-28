@@ -1,5 +1,6 @@
-import type { Backend, Device, DeviceKind, FanInfo, HardwareState, RGB, Sensor } from './types'
+import type { Assignment, Backend, Device, DeviceKind, FanInfo, HardwareState, RGB, Sensor } from './types'
 import type { InvokeArgs } from '@tauri-apps/api/core'
+import { hwEffectFor } from './hwEffects'
 import { Q6_ANSI_POSITIONS } from './keychronQ6'
 import { SimBackend } from './sim'
 import { simulatorActive, useSettings } from '../settings'
@@ -86,6 +87,8 @@ export class HybridBackend implements Backend {
     this.changed()
     try {
       this.hwElevated = await invoke<boolean>('hw_start', { lhmDir: useSettings.getState().lhmDir || null })
+      // starting the fan service opens the cooler's USB link, which resets its lighting: apply it again
+      this.hwKeys.clear()
       this.hwRaw = await invoke<HwRaw>('hw_apply', { set: [] })
       this.hwState = 'on'
     } catch (e) {
@@ -194,6 +197,10 @@ export class HybridBackend implements Backend {
         this.rgbError = null
         const ids = stableIds(found)
         this.rgbDevices = new Map(found.map((d, k) => [ids[k], d.index]))
+        this.rgbNames = new Map(found.map((d) => [d.index, d.name]))
+        this.hwDevices = new Set(found.filter((d) => /kraken/i.test(d.name)).map((d) => ids[found.indexOf(d)]))
+        this.hwKeys.clear()
+        this.hwFallback.clear()
         this.pending.clear()
         this.sent.clear()
         this.changed()
@@ -201,6 +208,9 @@ export class HybridBackend implements Backend {
           return found.map((d): Device => ({
             id: ids[found.indexOf(d)],
             name: d.name,
+            note: /kraken/i.test(d.name)
+              ? 'Runs the cooler\'s own built-in effects, so its motion cannot be kept in step with other devices. Solid colors match.'
+              : undefined,
             kind: KIND[d.kind] ?? 'strip',
             layout: d.cols ? 'grid' : d.kind === 3 ? 'ring' : 'strip',
             ledCount: d.led_count,
@@ -237,7 +247,56 @@ export class HybridBackend implements Backend {
     }
   }
 
+  /** Devices that animate on their own (the Kraken) get a built-in effect instead of streamed frames. */
+  private hwDevices = new Set<string>()
+  private hwFallback = new Set<string>()
+  private hwKeys = new Map<string, string>()
+  private hwTimers = new Map<string, number>()
+
+  /** Called with every device's current effect; only devices that animate on their own act on it. */
+  syncEffect(id: string, a: Assignment) {
+    if (!this.hwDevices.has(id)) return
+    const key = JSON.stringify([a.effectId, a.params, a.brightness])
+    if (this.hwKeys.get(id) === key) return
+    this.hwKeys.set(id, key)
+    window.clearTimeout(this.hwTimers.get(id))
+    // a slider drag changes the effect many times a second; settle before talking to the device
+    this.hwTimers.set(id, window.setTimeout(() => void this.applyHwEffect(id, a), 300))
+  }
+
+  /** Recent built-in effect results, readable from the developer console as window.__lfaHw. */
+  private hwLog(line: string) {
+    const w = window as unknown as { __lfaHw?: string[] }
+    ;(w.__lfaHw ??= []).push(`${new Date().toISOString().slice(11, 19)} ${line}`)
+    if (w.__lfaHw.length > 50) w.__lfaHw.shift()
+  }
+
+  private async applyHwEffect(id: string, a: Assignment) {
+    const idx = this.rgbDevices.get(id)
+    if (idx === undefined) return
+    const fx = hwEffectFor(a.effectId, a.params)
+    for (const mode of fx.modes) {
+      try {
+        await invoke('openrgb_set_mode', {
+          device: idx,
+          mode,
+          speed: fx.speed ?? null,
+          brightness: a.brightness / 100,
+          colors: fx.colors ?? [],
+        })
+        this.hwFallback.delete(id)
+        this.hwLog(`${a.effectId} -> ${mode} ok`)
+        return
+      } catch (e) {
+        /* this device has no such mode: try the next one */
+        this.hwLog(`${a.effectId} -> ${mode} failed: ${String(e)}`)
+      }
+    }
+    this.hwFallback.add(id) // nothing close enough: stream frames, slowly
+  }
+
   setLeds(id: string, colors: RGB[]) {
+    if (this.hwDevices.has(id) && !this.hwFallback.has(id)) return
     if (this.viaPerKey.has(id)) {
       this.viaFrames.set(id, colors.flat())
       return
@@ -295,18 +354,43 @@ export class HybridBackend implements Backend {
     }
   }
 
+  private lastRgbAt = new Map<number, number>()
+  private rgbNames = new Map<number, string>()
+
+  /**
+   * The Kraken applies lighting updates slowly: tested on a 2024 Elite, its ring follows one update a second
+   * but ignores faster ones (four a second left it on a stale colour), and the flood also starves the
+   * fan control that shares its USB link. Everything else takes frames at full speed.
+   */
+  private rgbInterval(idx: number) {
+    return /kraken|nzxt/i.test(this.rgbNames.get(idx) ?? '') ? 1000 : 0
+  }
+
   private async flushRgb() {
     if (!this.pending.size || !this.rgbConnected) return
+    const now = performance.now()
     const frames: [number, number[]][] = []
+    const later = new Map<number, number[]>()
     for (const [i, rgb] of this.pending) {
+      if (now - (this.lastRgbAt.get(i) ?? 0) < this.rgbInterval(i)) {
+        later.set(i, rgb) // too soon for this device; the newest frame goes out next time
+        continue
+      }
       const prev = this.sent.get(i)
-      if (!prev || prev.length !== rgb.length || prev.some((v, k) => v !== rgb[k])) frames.push([i, rgb])
+      const changed = !prev || prev.length !== rgb.length || prev.some((v, k) => v !== rgb[k])
+      // many controllers fall back to their own effect if they hear nothing for a few seconds, so a
+      // steady colour is repeated now and then
+      const stale = now - (this.lastRgbAt.get(i) ?? 0) > KEEPALIVE_MS
+      if (changed || stale) frames.push([i, rgb])
     }
-    this.pending.clear()
+    this.pending = later
     if (!frames.length) return
     try {
       await invoke('openrgb_update', { frames })
-      for (const [i, rgb] of frames) this.sent.set(i, rgb)
+      for (const [i, rgb] of frames) {
+        this.sent.set(i, rgb)
+        this.lastRgbAt.set(i, now)
+      }
     } catch (e) {
       // the Rust side dropped the connection; the user can retry from the status chip
       this.rgbError = String(e)
@@ -364,6 +448,8 @@ export class HybridBackend implements Backend {
     }
   }
 }
+
+const KEEPALIVE_MS = 2000
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '')
 

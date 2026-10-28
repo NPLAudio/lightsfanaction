@@ -29,6 +29,7 @@ function renderFrames() {
       return [Math.round(c[0] * k), Math.round(c[1] * k), Math.round(c[2] * k)]
     })
     frames.set(d.id, out)
+    backend.syncEffect(d.id, a)
     backend.setLeds(d.id, out)
   }
 }
@@ -64,8 +65,11 @@ const watches = new Map<string, Watch>()
 const STALL_MIN_PCT = 25
 const STALL_KICK_AFTER = 6
 const STALL_BOOST_AFTER = 8
-const MISMATCH_TOLERANCE = 8
-const MISMATCH_TICKS = 5
+const MISMATCH_TOLERANCE = 10
+const MISMATCH_TICKS = 8
+/** Many fans and coolers have their own minimum duty (often 20 to 25%), so a low request being
+ * lifted is the hardware's limit, not a fan ignoring us. Only requests at or above this are checked. */
+const MISMATCH_MIN_COMMAND = 30
 const REFRESH_SECONDS = 15
 
 async function fanTick() {
@@ -110,6 +114,8 @@ async function fanTick() {
       let note: string | undefined
       const manualDrive = calibrating.get(f.id)
       const prev = previews.get(f.id)
+      // calibration and listen tests deliberately sweep through speeds the hardware may refuse
+      const testing = manualDrive !== undefined || (prev !== undefined && now < prev.until)
       if (manualDrive !== undefined) {
         pct = manualDrive
         note = 'calibrating'
@@ -152,7 +158,8 @@ async function fanTick() {
       // verify: the hardware should report roughly what we last told it
       const reported = reading?.pct
       const applied = w.prevSent ?? w.sent
-      if (reported !== undefined && applied !== undefined && Math.abs(reported - applied) > MISMATCH_TOLERANCE) w.mismatch++
+      const checkable = !testing && applied !== undefined && applied >= MISMATCH_MIN_COMMAND
+      if (reported !== undefined && checkable && Math.abs(reported - applied) > MISMATCH_TOLERANCE) w.mismatch++
       else w.mismatch = 0
 
       let warning: FanLive['warning']

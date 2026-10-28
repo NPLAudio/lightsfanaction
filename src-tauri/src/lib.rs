@@ -36,6 +36,13 @@ fn trace_ping() {
     FRAMES.fetch_add(1, Ordering::Relaxed);
 }
 
+fn trace_line(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("lfa-trace.log")) {
+        let _ = writeln!(f, "{msg}");
+    }
+}
+
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -63,13 +70,37 @@ async fn openrgb_update(state: State<'_, Rgb>, frames: Vec<(u32, Vec<u8>)>) -> R
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     let client = guard.as_mut().ok_or("OpenRGB is not connected")?;
     FRAMES.fetch_add(1, Ordering::Relaxed);
+    let trace = std::env::var_os("LFA_TRACE").is_some();
     for (idx, rgb) in frames {
-        if let Err(e) = client.set_leds(idx, &rgb) {
+        let started = std::time::Instant::now();
+        let result = client.set_leds(idx, &rgb);
+        if trace {
+            trace_line(&format!("openrgb device {idx}: {} bytes, {} ms, {}", rgb.len(), started.elapsed().as_millis(), if result.is_ok() { "ok" } else { "ERROR" }));
+        }
+        if let Err(e) = result {
+            if trace {
+                trace_line(&format!("openrgb error on device {idx}: {e}"));
+            }
             *guard = None;
             return Err(e);
         }
     }
     Ok(())
+}
+
+/// Starts a device's own built-in effect (see `Client::set_mode`).
+#[tauri::command]
+async fn openrgb_set_mode(
+    state: State<'_, Rgb>,
+    device: u32,
+    mode: String,
+    speed: Option<f32>,
+    brightness: Option<f32>,
+    colors: Vec<[u8; 3]>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let client = guard.as_mut().ok_or("OpenRGB is not connected")?;
+    client.set_mode(device, &mode, speed, brightness, &colors)
 }
 
 #[tauri::command]
@@ -266,6 +297,7 @@ pub fn run() {
             openrgb_update,
             openrgb_disconnect,
             openrgb_resize_zone,
+            openrgb_set_mode,
             kraken_info,
             kraken_display,
             kraken_liquid,
