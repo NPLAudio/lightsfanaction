@@ -5,7 +5,7 @@ import { CRITICAL_TEMP, CURVE_PRESETS, PUMP_MIN_PCT, defaultCritical, evalCurve 
 import type { FanCalibration, FanMode } from '../lib/types'
 import { useStore } from '../store'
 import { useRef, useState } from 'react'
-import { CalibrationStopped, calibrateFan, type CalProgress } from '../calibrate'
+import { CalibrationStopped, calibrateFan, calibrateMany, useBatch, type CalProgress } from '../calibrate'
 import { previewFan } from '../engine'
 
 const MODES: { id: FanMode; label: string }[] = [
@@ -93,6 +93,7 @@ function CalibrationPanel({ fanId, pump }: { fanId: string; pump: boolean }) {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   const abort = useRef<AbortController | null>(null)
   const running = progress !== null
+  const batchRunning = useBatch((s) => s.running)
 
   const start = async () => {
     abort.current = new AbortController()
@@ -116,7 +117,7 @@ function CalibrationPanel({ fanId, pump }: { fanId: string; pump: boolean }) {
         {running ? (
           <button className="btn" onClick={() => abort.current?.abort()}>Cancel</button>
         ) : (
-          <button className="btn primary" disabled={pump} onClick={() => void start()}>
+          <button className="btn primary" disabled={pump || batchRunning} onClick={() => void start()}>
             {cal ? 'Calibrate again' : 'Calibrate this fan'}
           </button>
         )}
@@ -194,9 +195,60 @@ function ListenTest({ fanId, maxPct, onUse }: { fanId: string; maxPct: number; o
   )
 }
 
+const STATUS_LABEL: Record<string, string> = {
+  queued: 'Waiting',
+  cooling: 'Cooling down',
+  running: 'Measuring',
+  done: 'Done',
+  failed: 'Not measured',
+  skipped: 'Skipped',
+}
+
+function BatchPanel({ onClose }: { onClose(): void }) {
+  const { running, items, current } = useBatch()
+  const finished = items.filter((i) => i.status === 'done' || i.status === 'failed' || i.status === 'skipped').length
+  return (
+    <div className="panel batch">
+      <div className="editor-head">
+        <h2>Calibrating {items.length} fans</h2>
+        {running ? (
+          <button className="btn" onClick={() => batchAbort?.abort()}>Cancel</button>
+        ) : (
+          <button className="btn" onClick={onClose}>Close</button>
+        )}
+      </div>
+      <span className="bar"><i style={{ width: `${items.length ? (finished / items.length) * 100 : 0}%` }} /></span>
+      <ul className="batch-list">
+        {items.map((i) => (
+          <li key={i.id} className={`b-${i.status}`}>
+            <span className="b-name">{i.name}</span>
+            <span className="b-status">{STATUS_LABEL[i.status]}</span>
+            <span className="muted b-text">
+              {i.status === 'running' && current ? `${current.phase}: ${current.pct}% to ${current.rpm} RPM` : i.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+let batchAbort: AbortController | null = null
+
 export function FansPage() {
   const { fans, live, sensors, selectedFan, selectFan, patchFan, setCurve } = useStore()
   const [stress, setStress] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [showBatch, setShowBatch] = useState(false)
+  const batchRunning = useBatch((s) => s.running)
+  const batchItems = useBatch((s) => s.items)
+  const toggle = (id: string) =>
+    setSelected((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const fan = fans.find((f) => f.id === selectedFan)
   if (!fan) return null
   const temp = sensors.find((s) => s.id === fan.sensorId)?.value
@@ -237,17 +289,49 @@ export function FansPage() {
         ))}
       </div>
 
+      <div className="fan-tools">
+        <button className="chip" disabled={batchRunning} onClick={() => setSelected(new Set(fans.filter((f) => !f.pump).map((f) => f.id)))}>
+          Select all fans
+        </button>
+        <button className="chip" disabled={batchRunning || selected.size === 0} onClick={() => setSelected(new Set())}>Clear selection</button>
+        <button
+          className="btn primary"
+          disabled={batchRunning || selected.size === 0}
+          title="Measures the selected fans one after another"
+          onClick={() => {
+            batchAbort = new AbortController()
+            setShowBatch(true)
+            void calibrateMany([...selected], batchAbort.signal)
+          }}
+        >
+          Calibrate selected ({selected.size})
+        </button>
+      </div>
+
+      {showBatch && batchItems.length > 0 && <BatchPanel onClose={() => setShowBatch(false)} />}
+
       <div className="fan-cards">
         {fans.map((f) => {
           const lv = live[f.id]
           return (
-            <button key={f.id} className={`fan-card ${f.id === fan.id ? 'on' : ''}`} onClick={() => selectFan(f.id)}>
+            <div key={f.id} className="fan-wrap">
+              <label className="fan-select" title="Select for calibration">
+                <input
+                  type="checkbox"
+                  checked={selected.has(f.id)}
+                  disabled={batchRunning}
+                  aria-label={`Select ${f.name}`}
+                  onChange={() => toggle(f.id)}
+                />
+              </label>
+            <button className={`fan-card ${f.id === fan.id ? 'on' : ''}`} onClick={() => selectFan(f.id)}>
               <span className="fan-name">{f.name}</span>
               <span className="rpm">{lv ? lv.rpm : '–'}<small> RPM</small></span>
               <span className="bar"><i style={{ width: `${lv?.pct ?? 0}%` }} /></span>
               <span className="muted">{lv?.pct ?? 0}% · {lv?.note ?? f.mode}</span>
               {lv?.warning && <span className="warn-badge" title={WARNINGS[lv.warning]}>{lv.warning === 'stalled' ? 'Stalled' : 'Not responding'}</span>}
             </button>
+            </div>
           )
         })}
       </div>

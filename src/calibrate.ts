@@ -1,5 +1,6 @@
 import { calibrating, fanTemps } from './engine'
 import { backend } from './lib/backend'
+import { create } from 'zustand'
 import { useStore } from './store'
 import type { FanCalibration } from './lib/types'
 
@@ -31,7 +32,102 @@ export interface CalOutcome {
 
 export class CalibrationStopped extends Error {}
 
+export type BatchStatus = 'queued' | 'cooling' | 'running' | 'done' | 'failed' | 'skipped'
+
+export interface BatchItem {
+  id: string
+  name: string
+  status: BatchStatus
+  text?: string
+}
+
+interface BatchState {
+  running: boolean
+  items: BatchItem[]
+  /** progress of the fan being measured right now */
+  current?: CalProgress
+  patch(id: string, p: Partial<BatchItem>): void
+}
+
+export const useBatch = create<BatchState>((set, get) => ({
+  running: false,
+  items: [],
+  patch: (id, p) => set({ items: get().items.map((i) => (i.id === id ? { ...i, ...p } : i)) }),
+}))
+
+/** How long to wait between fans for the system to cool back down. */
+const COOLDOWN_MAX_MS = 180_000
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+/**
+ * Calibrates several fans one after another (never in parallel: slowing two fans at once heats the
+ * system twice as fast). Between fans it waits for the temperature to settle, skips pumps, carries
+ * on after a fan that cannot be measured, and stops everything when cancelled.
+ */
+export async function calibrateMany(ids: string[], signal: AbortSignal): Promise<void> {
+  const { fans, setCalibration } = useStore.getState()
+  const batch = useBatch
+  const picked = ids.map((id) => fans.find((f) => f.id === id)).filter((f) => !!f)
+  batch.setState({
+    running: true,
+    current: undefined,
+    items: picked.map((f) => ({
+      id: f.id,
+      name: f.name,
+      status: f.pump || /pump/i.test(f.name) ? 'skipped' : 'queued',
+      text: f.pump || /pump/i.test(f.name) ? 'Pumps are never calibrated.' : undefined,
+    })),
+  })
+  try {
+    let first = true
+    for (const f of picked) {
+      if (signal.aborted) break
+      if (batch.getState().items.find((i) => i.id === f.id)?.status === 'skipped') continue
+
+      if (!first) {
+        // let the previous fan's slow-down wear off before the next one starts
+        batch.getState().patch(f.id, { status: 'cooling', text: 'Waiting for the temperature to settle' })
+        const until = Date.now() + COOLDOWN_MAX_MS
+        while (Date.now() < until && !signal.aborted) {
+          const info = fanTemps.get(f.id)
+          if (info?.temp !== undefined && info.temp <= info.critical - START_HEADROOM) break
+          await sleep(2000)
+        }
+        if (signal.aborted) break
+      }
+      first = false
+
+      batch.getState().patch(f.id, { status: 'running', text: undefined })
+      try {
+        const out = await calibrateFan(
+          f.id,
+          (p) => batch.setState({ current: p }),
+          signal,
+        )
+        if (out.cal) setCalibration(f.id, out.cal)
+        batch.getState().patch(f.id, { status: out.cal ? 'done' : 'failed', text: out.message })
+      } catch (e) {
+        if (signal.aborted) break
+        batch.getState().patch(f.id, {
+          status: 'failed',
+          text: e instanceof CalibrationStopped ? e.message : String(e),
+        })
+      }
+      batch.setState({ current: undefined })
+    }
+    if (signal.aborted) {
+      for (const i of batch.getState().items) {
+        if (i.status === 'queued' || i.status === 'cooling' || i.status === 'running') {
+          batch.getState().patch(i.id, { status: 'skipped', text: 'Cancelled.' })
+        }
+      }
+    }
+  } finally {
+    calibrating.clear()
+    batch.setState({ running: false, current: undefined })
+  }
+}
 
 /**
  * Measures one fan: speed at 100%, the duty where it stalls on the way down, and the duty needed to

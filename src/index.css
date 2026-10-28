@@ -145,3 +145,17 @@ input[type='range'] { accent-color: var(--accent); width: 100%; }
 .listen .row { grid-template-columns: 1fr; gap: 4px; }
 .cal-grid { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 4px 24px; margin: 10px 0; font-size: 14px; }
 .rpm-graph { width: 260px; max-width: 100%; display: block; margin: 8px 0; background: var(--surface-2); border-radius: 8px; }
+
+.fan-wrap { position: relative; }
+.fan-wrap .fan-card { width: 100%; height: 100%; }
+.fan-select { position: absolute; top: 10px; right: 12px; display: flex; cursor: pointer; }
+.fan-tools { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.batch { margin-bottom: 14px; }
+.batch-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.batch-list li { display: grid; grid-template-columns: 180px 110px 1fr; gap: 10px; align-items: baseline; font-size: 13px; }
+.b-name { font-weight: 550; }
+.b-status { color: var(--muted); }
+.b-running .b-status { color: var(--accent-2); }
+.b-done .b-status { color: #6ee7a8; }
+.b-failed .b-status { color: var(--hot); }
+@media (max-width: 700px) { .batch-list li { grid-template-columns: 1fr; gap: 2px; } }
