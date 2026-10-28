@@ -77,30 +77,72 @@ export interface CurvePoint {
 
 export type FanMode = 'curve' | 'manual' | 'full'
 
+export type MixMode = 'max' | 'avg'
+
 export interface FanConfig {
   id: string
   name: string
+  /** first temperature source; kept for older saved configs */
   sensorId: string
+  /** extra sources, combined with `mix`; the first entry is sensorId */
+  extraSensorIds: string[]
+  mix: MixMode
   mode: FanMode
   curve: CurvePoint[]
   manual: number
   /** lowest duty while running; 0 allows the fan to stop */
   minPct: number
+  /** quiet cap: curves never go above this unless it is getting hot */
+  maxPct: number
   /** degrees the temperature must fall before the fan slows down */
   hysteresis: number
-  /** max duty change per second */
-  ramp: number
+  /** seconds over which the temperature reading is averaged */
+  smoothSec: number
+  /** max duty increase per second */
+  stepUp: number
+  /** max duty decrease per second */
+  stepDown: number
+  /** seconds the fan holds its speed after speeding up before it may slow down */
+  holdSec: number
+  /** overrides the automatic emergency temperature for this fan's sources */
+  criticalTemp?: number
+  /** pumps never stop and never go below PUMP_MIN_PCT */
+  pump: boolean
 }
+
+/** What a sweep measured for one fan. */
+export interface FanCalibration {
+  at: number
+  /** false when the fan never reported a speed, so stalls cannot be detected */
+  tach: boolean
+  maxRpm: number
+  /** lowest duty that kept the fan turning, plus a safety margin */
+  minRunPct: number
+  /** duty at which the fan stopped on the way down (100 if it never did) */
+  stopPct: number
+  /** duty needed to get it turning again from a stop */
+  startPct: number
+  /** measured duty to RPM points, descending duty */
+  map: { pct: number; rpm: number }[]
+}
+
+export type FanWarning = 'stalled' | 'ignored'
 
 export interface FanLive {
   id: string
   rpm: number
+  /** duty we commanded this tick */
   pct: number
+  /** duty the hardware reported back, when it reports one */
+  reported?: number
+  warning?: FanWarning
+  /** why the speed is not what the curve says: "emergency", "kick-start", "quiet cap" ... */
+  note?: string
 }
 
 export interface HardwareState {
   sensors: Sensor[]
-  fans: { id: string; rpm: number }[]
+  fans: { id: string; rpm: number; pct?: number }[]
 }
 
 export interface FanInfo {

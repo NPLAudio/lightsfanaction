@@ -135,3 +135,13 @@ input[type='range'] { accent-color: var(--accent); width: 100%; }
 .zone-row input { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; width: 90px; }
 .note.err { color: var(--hot); }
 @media (max-width: 860px) { .lcd-layout { grid-template-columns: 1fr; } }
+
+.warn-badge { align-self: flex-start; background: #3a2a10; color: #ffb020; border: 1px solid #6b4a12; border-radius: 999px; padding: 1px 9px; font-size: 12px; }
+.warn-note { background: #3a2a10; border: 1px solid #6b4a12; color: #ffd18a; border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.4; margin: 8px 0 0; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin: 8px 0; cursor: pointer; }
+.more-sources { margin: 6px 0 2px; font-size: 13px; color: var(--muted); }
+.more-sources summary { cursor: pointer; }
+.listen { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 6px; }
+.listen .row { grid-template-columns: 1fr; gap: 4px; }
+.cal-grid { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 4px 24px; margin: 10px 0; font-size: 14px; }
+.rpm-graph { width: 260px; max-width: 100%; display: block; margin: 8px 0; background: var(--surface-2); border-radius: 8px; }

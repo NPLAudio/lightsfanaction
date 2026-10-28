@@ -1,9 +1,19 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { backend } from './lib/backend'
-import { CURVE_PRESETS } from './lib/curve'
+import { CURVE_PRESETS, PUMP_MIN_PCT } from './lib/curve'
 import { defaultParams } from './lib/effects'
-import type { Assignment, CurvePoint, Device, FanConfig, FanInfo, FanLive, ParamValue, Sensor } from './lib/types'
+import type {
+  Assignment,
+  CurvePoint,
+  Device,
+  FanCalibration,
+  FanConfig,
+  FanInfo,
+  FanLive,
+  ParamValue,
+  Sensor,
+} from './lib/types'
 
 interface State {
   devices: Device[]
@@ -16,6 +26,7 @@ interface State {
   selectedFan: string
   sensors: Sensor[]
   live: Record<string, FanLive>
+  calibrations: Record<string, FanCalibration>
   lcdLive: boolean
   lcdError: string | null
 
@@ -29,23 +40,41 @@ interface State {
   patchFan(id: string, patch: Partial<FanConfig>): void
   setCurve(id: string, curve: CurvePoint[]): void
   setLive(sensors: Sensor[], live: Record<string, FanLive>): void
+  setCalibration(id: string, cal: FanCalibration | null): void
   setLcdLive(on: boolean): void
   setLcdError(e: string | null): void
 }
 
 const newAssignment = (effectId: string): Assignment => ({ effectId, params: defaultParams(effectId), brightness: 100 })
 
-const defaultFan = (f: FanInfo): FanConfig => ({
-  id: f.id,
-  name: f.name,
-  sensorId: f.sensorId,
-  mode: 'curve',
-  curve: CURVE_PRESETS.Balanced.map((p) => ({ ...p })),
-  manual: 50,
-  minPct: /pump/i.test(f.name) ? 60 : 20,
-  hysteresis: 3,
-  ramp: 15,
-})
+const defaultFan = (f: FanInfo): FanConfig => {
+  const pump = /pump/i.test(f.name)
+  return {
+    id: f.id,
+    name: f.name,
+    sensorId: f.sensorId,
+    extraSensorIds: [],
+    mix: 'max',
+    mode: 'curve',
+    curve: CURVE_PRESETS.Balanced.map((p) => ({ ...p })),
+    manual: 50,
+    minPct: pump ? PUMP_MIN_PCT : 20,
+    maxPct: 100,
+    hysteresis: 3,
+    smoothSec: 5,
+    stepUp: 20,
+    stepDown: 3,
+    holdSec: 10,
+    pump,
+  }
+}
+
+/** Fills in settings added since a config was saved; the old `ramp` became the step-down rate. */
+function migrateFan(saved: Partial<FanConfig> & { ramp?: number }, info: FanInfo): FanConfig {
+  const base = defaultFan(info)
+  const { ramp, ...rest } = saved
+  return { ...base, ...rest, stepDown: rest.stepDown ?? (ramp ? Math.min(ramp, 10) : base.stepDown) }
+}
 
 export const useStore = create<State>()(
   persist(
@@ -60,6 +89,7 @@ export const useStore = create<State>()(
       selectedFan: '',
       sensors: [],
       live: {},
+      calibrations: {},
       lcdLive: false,
       lcdError: null,
 
@@ -68,7 +98,10 @@ export const useStore = create<State>()(
         const { assignments, fans, selectedDevice, selectedFan } = get()
         const a = { ...assignments }
         for (const d of devices) a[d.id] ??= newAssignment(d.kind === 'fan' ? 'spin' : 'rainbow')
-        const f = fanInfo.map((i) => fans.find((x) => x.id === i.id) ?? defaultFan(i))
+        const f = fanInfo.map((i) => {
+          const saved = fans.find((x) => x.id === i.id)
+          return saved ? migrateFan(saved, i) : defaultFan(i)
+        })
         set({
           devices,
           fanInfo,
@@ -113,6 +146,12 @@ export const useStore = create<State>()(
       patchFan: (id, patch) => set({ fans: get().fans.map((f) => (f.id === id ? { ...f, ...patch } : f)) }),
       setCurve: (id, curve) => get().patchFan(id, { curve }),
       setLive: (sensors, live) => set({ sensors, live }),
+      setCalibration(id, cal) {
+        const next = { ...get().calibrations }
+        if (cal) next[id] = cal
+        else delete next[id]
+        set({ calibrations: next })
+      },
       setLcdLive: (lcdLive) => set({ lcdLive }),
       setLcdError: (lcdError) => set({ lcdError }),
     }),
@@ -123,6 +162,7 @@ export const useStore = create<State>()(
         selectedDevice: s.selectedDevice,
         syncAll: s.syncAll,
         fans: s.fans,
+        calibrations: s.calibrations,
         selectedFan: s.selectedFan,
         lcdLive: s.lcdLive,
       }),

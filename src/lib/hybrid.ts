@@ -341,7 +341,7 @@ export class HybridBackend implements Backend {
     this.hwSet.clear()
     try {
       this.hwRaw = await invoke<HwRaw>('hw_apply', { set })
-      return { sensors: this.hwRaw.sensors, fans: this.hwRaw.fans.map((f) => ({ id: f.id, rpm: f.rpm })) }
+      return { sensors: this.hwRaw.sensors, fans: this.hwRaw.fans.map((f) => ({ id: f.id, rpm: f.rpm, pct: f.pct })) }
     } catch (e) {
       // sidecar is gone and has already returned fans to firmware control
       this.hwState = 'error'

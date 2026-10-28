@@ -127,6 +127,8 @@ sealed class Hardware : IDisposable
     readonly HashSet<ISensor> overridden = new();
     Dictionary<string, ISensor> controls = new();
     long lastTouch = Stopwatch.GetTimestamp();
+    long lastStorageUpdate;
+    static readonly TimeSpan StorageEvery = TimeSpan.FromSeconds(30);
 
     public static bool IsAdmin =>
         new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
@@ -152,7 +154,14 @@ sealed class Hardware : IDisposable
     {
         lock (gate)
         {
-            foreach (var h in computer.Hardware) UpdateAll(h);
+            foreach (var h in computer.Hardware)
+            {
+                // drive temperatures change slowly and every refresh is a SMART/NVMe query
+                if (h.HardwareType == HardwareType.Storage && lastStorageUpdate != 0
+                    && Stopwatch.GetElapsedTime(lastStorageUpdate) < StorageEvery) continue;
+                UpdateAll(h);
+                if (h.HardwareType == HardwareType.Storage) lastStorageUpdate = Stopwatch.GetTimestamp();
+            }
             var all = computer.Hardware.SelectMany(AllSensors).ToList();
 
             var temps = all
@@ -194,7 +203,7 @@ sealed class Hardware : IDisposable
         {
             if (!controls.TryGetValue(id, out var s) || s.Control is null) return;
             // a stalled pump can cook a CPU in seconds, so it never goes below half speed
-            var floor = Regex.IsMatch(s.Name, "pump", RegexOptions.IgnoreCase) ? 50 : 0;
+            var floor = Regex.IsMatch(s.Name + " " + s.Hardware.Name, "pump|aio|water|liquid", RegexOptions.IgnoreCase) ? 50 : 0;
             s.Control.SetSoftware((float)Math.Clamp(pct, floor, 100));
             overridden.Add(s);
         }
