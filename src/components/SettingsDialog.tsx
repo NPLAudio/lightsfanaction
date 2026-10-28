@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SwitchField } from '@/components/Field'
@@ -92,6 +94,20 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
               disabled={!IS_TAURI || s.useSimulator}
               onChange={(v) => s.set({ controlFans: v })}
             />
+            <div className="space-y-2">
+              <Label htmlFor="lhm-dir" className="text-sm">LibreHardwareMonitor folder</Label>
+              <Input
+                id="lhm-dir"
+                placeholder="Found automatically"
+                value={s.lhmDir}
+                disabled={!IS_TAURI}
+                onChange={(e) => s.set({ lhmDir: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">
+                Fan control reads LibreHardwareMonitor, which is installed separately. Only fill this in if it lives
+                somewhere unusual; it is used the next time fan control starts.
+              </p>
+            </div>
             <Separator />
             <p className="text-sm text-muted-foreground">
               Anything switched off here is hidden and left alone: the app never changes its speed.

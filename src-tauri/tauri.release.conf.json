@@ -1,0 +1,21 @@
+{
+  "bundle": {
+    "targets": ["msi"],
+    "publisher": "NPLAudio",
+    "copyright": "Copyright (c) 2026 NPLAudio",
+    "category": "Utility",
+    "shortDescription": "RGB lighting and fan control",
+    "longDescription": "Open-source RGB lighting and fan control: effects, temperature-driven fan curves with calibration, a Kraken cooler screen, and per-key keyboard lighting.",
+    "licenseFile": "installer/LICENSE.rtf",
+    "resources": {
+      "../sidecar-publish/": "sidecar/"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "skip" },
+      "wix": {
+        "language": "en-US",
+        "template": "installer/main.wxs"
+      }
+    }
+  }
+}

@@ -85,7 +85,7 @@ export class HybridBackend implements Backend {
     this.hwError = null
     this.changed()
     try {
-      this.hwElevated = await invoke<boolean>('hw_start')
+      this.hwElevated = await invoke<boolean>('hw_start', { lhmDir: useSettings.getState().lhmDir || null })
       this.hwRaw = await invoke<HwRaw>('hw_apply', { set: [] })
       this.hwState = 'on'
     } catch (e) {

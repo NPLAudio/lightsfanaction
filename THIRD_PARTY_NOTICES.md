@@ -1,7 +1,8 @@
 # Third-party notices
 
-Lights Fan Action's own code is MIT licensed (see `LICENSE`). It uses and, in some cases, ships the
-software below under their own licenses. Versions are those in the lock files at the time of writing.
+Lights Fan Action's own code is MIT licensed (see `LICENSE`). The installer ships only this project's own
+files; programs it works with are installed separately by the user. The software below is used under its own
+license. Versions are those in the lock files at the time of writing.
 
 ## Firmware (GPL)
 
@@ -18,7 +19,7 @@ corresponding source, and `firmware/keychron-q6/README.md` says how to rebuild i
 
 | Component | License | Notes |
 | --- | --- | --- |
-| [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) 0.9.6 | MPL-2.0 | Linked unmodified into `sidecar/`. Its source is available at the project link above. |
+| [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) 0.9.6 | MPL-2.0 | **Not distributed.** `sidecar/` is compiled against `LibreHardwareMonitorLib` and, at run time, loads the copy the user installed. |
 
 ## Rust (desktop shell)
 
@@ -50,4 +51,5 @@ Development tools (Vite, Vitest, TypeScript, oxlint, the Tauri CLI) are not ship
   contains none of its code.
 - **liquidctl** (GPL-3.0) documents the NZXT Kraken screen protocol. The protocol was reimplemented in
   Rust from that description; no liquidctl code is included.
-- **PawnIO** and **.NET** are installed separately by the user and are not redistributed here.
+- **PawnIO** (needed by OpenRGB for RAM lighting) is installed separately by the user and is not redistributed here.
+- **WebView2** is Microsoft's runtime, part of Windows 11, and is not redistributed here.

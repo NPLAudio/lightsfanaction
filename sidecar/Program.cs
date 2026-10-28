@@ -1,13 +1,24 @@
 // Hardware sidecar for Lights Fan Action: exposes LibreHardwareMonitor sensors and fan controls
 // over a loopback TCP socket (one JSON object per line). Every exit path hands the fans back to
 // firmware control: client disconnect, "shutdown", parent exit, heartbeat timeout, Ctrl+C.
+//
+// Built for .NET Framework 4.7.2, which ships with Windows, so no runtime has to be installed.
+// LibreHardwareMonitor itself is not included: it is installed separately and loaded from its own
+// folder (see LhmLocator).
+using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Principal;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Web.Script.Serialization;
+using LfaHw;
 using LibreHardwareMonitor.Hardware;
 
 string? token = null, portFile = null;
@@ -19,17 +30,28 @@ for (int i = 0; i < args.Length - 1; i++)
         case "--token": token = args[i + 1]; break;
         case "--port-file": portFile = args[i + 1]; break;
         case "--parent": parentPid = int.Parse(args[i + 1]); break;
+        // "--lhm-dir" is read by LhmLocator before this program starts
     }
 }
 if (token is null || portFile is null)
 {
-    Console.Error.WriteLine("usage: lfa-hw --token T --port-file F [--parent PID]");
+    Console.Error.WriteLine("usage: lfa-hw --token T --port-file F [--parent PID] [--lhm-dir DIR]");
     return 2;
 }
 
-var hw = new Hardware();
-AppDomain.CurrentDomain.ProcessExit += (_, _) => hw.ResetAll();
-Console.CancelKeyPress += (_, e) => { hw.ResetAll(); e.Cancel = false; };
+Hardware? hw = null;
+string? startError = null;
+try
+{
+    hw = new Hardware();
+}
+catch (Exception e) when (e is FileNotFoundException or FileLoadException or BadImageFormatException
+    or TypeLoadException or MissingMethodException or TypeInitializationException)
+{
+    startError = LhmLocator.Describe(e);
+}
+AppDomain.CurrentDomain.ProcessExit += (_, _) => hw?.ResetAll();
+Console.CancelKeyPress += (_, e) => { hw?.ResetAll(); e.Cancel = false; };
 
 // If the app dies without saying goodbye, don't leave fans pinned at a software speed.
 if (parentPid != 0)
@@ -37,7 +59,7 @@ if (parentPid != 0)
     new Thread(() =>
     {
         try { Process.GetProcessById(parentPid).WaitForExit(); } catch { }
-        hw.ResetAll();
+        hw?.ResetAll();
         Environment.Exit(0);
     }) { IsBackground = true }.Start();
 }
@@ -46,7 +68,7 @@ new Thread(() =>
     while (true)
     {
         Thread.Sleep(1000);
-        if (hw.StaleFor() > TimeSpan.FromSeconds(8)) hw.ResetAll();
+        if (hw is not null && hw.StaleFor() > TimeSpan.FromSeconds(8)) hw.ResetAll();
     }
 }) { IsBackground = true }.Start();
 
@@ -54,39 +76,55 @@ var listener = new TcpListener(IPAddress.Loopback, 0);
 listener.Start();
 var tmp = portFile + ".tmp";
 File.WriteAllText(tmp, ((IPEndPoint)listener.LocalEndpoint).Port.ToString());
-File.Move(tmp, portFile, true);
+if (File.Exists(portFile)) File.Delete(portFile);
+File.Move(tmp, portFile);
 
-var json = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+var json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+var utf8 = new UTF8Encoding(false);
+
+if (hw is null)
+{
+    // tell the app why there is nothing to talk to, then stop
+    using var failed = listener.AcceptTcpClient();
+    var fs = failed.GetStream();
+    new StreamReader(fs, utf8).ReadLine();
+    var fw = new StreamWriter(fs, utf8) { AutoFlush = true, NewLine = "\n" };
+    fw.WriteLine(json.Serialize(new { ok = false, error = startError }));
+    return 3;
+}
+
+static double Number(object? o) => Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture);
+
 bool quit = false;
 while (!quit)
 {
     using var client = listener.AcceptTcpClient();
     client.ReceiveTimeout = 0;
     var stream = client.GetStream();
-    var reader = new StreamReader(stream, new UTF8Encoding(false));
-    var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
+    var reader = new StreamReader(stream, utf8);
+    var writer = new StreamWriter(stream, utf8) { AutoFlush = true, NewLine = "\n" };
     try
     {
         var hello = reader.ReadLine();
-        if (hello is null || JsonDocument.Parse(hello).RootElement.GetProperty("token").GetString() != token) continue;
+        if (hello is null) continue;
+        var helloMsg = json.Deserialize<Dictionary<string, object>>(hello);
+        if (!helloMsg.TryGetValue("token", out var sent) || !string.Equals(sent as string, token, StringComparison.Ordinal)) continue;
         hw.Touch();
-        writer.WriteLine(JsonSerializer.Serialize(new { ok = true, elevated = Hardware.IsAdmin }, json));
+        writer.WriteLine(json.Serialize(new { ok = true, elevated = Hardware.IsAdmin }));
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
             hw.Touch();
-            using var doc = JsonDocument.Parse(line);
-            var root = doc.RootElement;
-            switch (root.GetProperty("cmd").GetString())
+            var msg = json.Deserialize<Dictionary<string, object>>(line);
+            switch (msg["cmd"] as string)
             {
                 case "apply":
-                    if (root.TryGetProperty("release", out var rel))
-                        foreach (var r in rel.EnumerateArray())
-                            hw.Release(r.GetString()!);
-                    if (root.TryGetProperty("set", out var sets))
-                        foreach (var s in sets.EnumerateArray())
-                            hw.SetFan(s.GetProperty("id").GetString()!, s.GetProperty("pct").GetDouble());
-                    writer.WriteLine(JsonSerializer.Serialize(hw.Snapshot(), json));
+                    if (msg.TryGetValue("release", out var rel) && rel is IEnumerable releases)
+                        foreach (var r in releases) hw.Release((string)r);
+                    if (msg.TryGetValue("set", out var sets) && sets is IEnumerable setList)
+                        foreach (Dictionary<string, object> s in setList)
+                            hw.SetFan((string)s["id"], Number(s["pct"]));
+                    writer.WriteLine(json.Serialize(hw.Snapshot()));
                     break;
                 case "reset":
                     hw.ResetAll();
@@ -104,7 +142,8 @@ while (!quit)
             if (quit) break;
         }
     }
-    catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException or InvalidOperationException)
+    catch (Exception e) when (e is IOException or ArgumentException or InvalidOperationException
+        or KeyNotFoundException or InvalidCastException or FormatException)
     {
         Console.Error.WriteLine(e.Message);
     }
@@ -139,8 +178,11 @@ sealed class Hardware : IDisposable
     public Hardware() => computer.Open();
     public void Dispose() => computer.Close();
 
+    static TimeSpan Since(long timestamp) =>
+        TimeSpan.FromSeconds((Stopwatch.GetTimestamp() - timestamp) / (double)Stopwatch.Frequency);
+
     public void Touch() => Interlocked.Exchange(ref lastTouch, Stopwatch.GetTimestamp());
-    public TimeSpan StaleFor() => Stopwatch.GetElapsedTime(Interlocked.Read(ref lastTouch));
+    public TimeSpan StaleFor() => Since(Interlocked.Read(ref lastTouch));
 
     static void UpdateAll(IHardware h)
     {
@@ -161,7 +203,7 @@ sealed class Hardware : IDisposable
             {
                 // drive temperatures change slowly and every refresh is a SMART/NVMe query
                 if (h.HardwareType == HardwareType.Storage && lastStorageUpdate != 0
-                    && Stopwatch.GetElapsedTime(lastStorageUpdate) < StorageEvery) continue;
+                    && Since(lastStorageUpdate) < StorageEvery) continue;
                 UpdateAll(h);
                 if (h.HardwareType == HardwareType.Storage) lastStorageUpdate = Stopwatch.GetTimestamp();
             }
@@ -207,12 +249,12 @@ sealed class Hardware : IDisposable
             if (!controls.TryGetValue(id, out var s) || s.Control is null) return;
             // a stalled pump can cook a CPU in seconds, so it never goes below half speed
             var floor = Regex.IsMatch(s.Name + " " + s.Hardware.Name, "pump|aio|water|liquid", RegexOptions.IgnoreCase) ? 50 : 0;
-            s.Control.SetSoftware((float)Math.Clamp(pct, floor, 100));
+            s.Control.SetSoftware((float)Math.Max(floor, Math.Min(100, pct)));
             overridden.Add(s);
         }
     }
 
-    /** Hands one control back to the firmware. */
+    /// <summary>Hands one control back to the firmware.</summary>
     public void Release(string id)
     {
         lock (gate)

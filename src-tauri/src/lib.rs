@@ -159,11 +159,11 @@ struct Hw(Mutex<Option<hw::Client>>);
 
 /// Starts the elevated hardware sidecar. Blocks while Windows shows the UAC prompt.
 #[tauri::command]
-async fn hw_start(state: State<'_, Hw>) -> Result<bool, String> {
+async fn hw_start(state: State<'_, Hw>, lhm_dir: Option<String>) -> Result<bool, String> {
     if let Some(mut old) = state.0.lock().map_err(|e| e.to_string())?.take() {
         old.shutdown();
     }
-    let client = hw::Client::start()?;
+    let client = hw::Client::start(lhm_dir.as_deref())?;
     let elevated = client.elevated;
     *state.0.lock().map_err(|e| e.to_string())? = Some(client);
     Ok(elevated)

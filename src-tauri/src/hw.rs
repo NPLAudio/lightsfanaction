@@ -38,8 +38,12 @@ pub fn sidecar_path() -> Option<PathBuf> {
 impl Client {
     /// Starts the sidecar (Windows shows a UAC prompt) and connects. Set LFA_NO_ELEVATE=1 to skip
     /// elevation; many sensors and all SuperIO fan controls then won't be available.
-    pub fn start() -> Result<Self, String> {
-        let exe = sidecar_path().ok_or("hardware sidecar not found (run `dotnet publish` in sidecar/)")?;
+    ///
+    /// `lhm_dir` is the folder LibreHardwareMonitor is installed in; when empty the service looks in the
+    /// usual places itself.
+    pub fn start(lhm_dir: Option<&str>) -> Result<Self, String> {
+        let exe = sidecar_path().ok_or("hardware service not found (run `dotnet build -c Release -o sidecar-publish` in sidecar/)")?;
+        let lhm_dir = lhm_dir.map(str::trim).filter(|d| !d.is_empty());
         let tok = token();
         let port_file = std::env::temp_dir().join(format!("lfa-hw-{}.port", std::process::id()));
         let _ = std::fs::remove_file(&port_file);
@@ -50,14 +54,22 @@ impl Client {
                 .args(["--token", &tok, "--port-file"])
                 .arg(&port_file)
                 .args(["--parent", &pid])
+                .args(lhm_dir.map(|d| ["--lhm-dir", d]).into_iter().flatten())
                 .spawn()
                 .map_err(|e| format!("cannot start sidecar: {e}"))?;
         } else {
             let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
-            let script = format!(
-                "Start-Process -FilePath {} -ArgumentList {},{},{},{},{},{} -Verb RunAs -WindowStyle Hidden",
-                q(&exe.to_string_lossy()),
+            let mut list = vec![
                 q("--token"), q(&tok), q("--port-file"), q(&port_file.to_string_lossy()), q("--parent"), q(&pid),
+            ];
+            if let Some(d) = lhm_dir {
+                list.push(q("--lhm-dir"));
+                list.push(q(d));
+            }
+            let script = format!(
+                "Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -WindowStyle Hidden",
+                q(&exe.to_string_lossy()),
+                list.join(","),
             );
             let out = Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
@@ -89,7 +101,8 @@ impl Client {
         let mut c = Client { reader: BufReader::new(stream), elevated: false };
         let hello = c.request(&json!({ "token": tok }))?;
         if hello["ok"] != true {
-            return Err("sidecar rejected the handshake".into());
+            // the service explains itself, e.g. when LibreHardwareMonitor is not installed
+            return Err(hello["error"].as_str().unwrap_or("the hardware service rejected the handshake").to_string());
         }
         c.elevated = hello["elevated"].as_bool().unwrap_or(false);
         Ok(c)

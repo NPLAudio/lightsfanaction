@@ -15,6 +15,8 @@ export interface Settings {
   devUnlocked: boolean
   /** Developer option: fake devices, fans and temperatures. Off unless asked for. */
   useSimulator: boolean
+  /** Folder LibreHardwareMonitor is installed in. Empty means look in the usual places. */
+  lhmDir: string
 }
 
 interface SettingsStore extends Settings {
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: Settings = {
   closeToTray: true,
   devUnlocked: false,
   useSimulator: false,
+  lhmDir: '',
 }
 
 export const useSettings = create<SettingsStore>()(

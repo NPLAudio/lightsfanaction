@@ -15,8 +15,31 @@ Open-source RGB lighting and fan control for Windows, in the spirit of SignalRGB
 - `src/` React UI built with shadcn/ui (Base UI + Tailwind). Pages in `src/pages/`, engine in `src/engine.ts`, fan controller in `src/lib/curve.ts` (unit-tested), calibration in `src/calibrate.ts`, settings in `src/settings.ts`.
 - `src/lib/hybrid.ts` routes calls to OpenRGB, the fan hardware service, the Keychron keyboard and the simulator behind the `Backend` interface in `src/lib/types.ts`.
 - `src-tauri/` Tauri shell: tray, close-to-tray, single instance, autostart, the OpenRGB client (`openrgb.rs`), Kraken screen (`kraken.rs`), Keychron/VIA keyboards (`via.rs`), and the launcher for the hardware service (`hw.rs`).
-- `sidecar/` C# hardware service on LibreHardwareMonitor (sensors and fan controls). Started with a Windows administrator prompt.
+- `sidecar/` C# hardware service for sensors and fan controls (.NET Framework 4.7.2). It uses the separately installed LibreHardwareMonitor and is started with a Windows administrator prompt.
 - `firmware/keychron-q6/` patched Keychron Q6 firmware and flashing instructions.
+
+## Install
+
+Download the MSI from the releases page and run it. Nothing third-party is included in the installer: its
+"Programs it works with" page checks for these, shows what is missing, and links to each download.
+
+| Needed for | Program | Notes |
+| --- | --- | --- |
+| The window | [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | Already part of Windows 11. |
+| Lighting | [OpenRGB](https://openrgb.org/releases.html) | Turn on its *SDK Server* (port 6742). For RAM lighting OpenRGB also needs the PawnIO driver. |
+| Fan control | [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest) | Unzip `LibreHardwareMonitor.zip` to `C:\Program Files\LibreHardwareMonitor`, or install it with `winget install LibreHardwareMonitor.LibreHardwareMonitor`. Elsewhere? Set its folder under Settings, Fans. |
+
+The installer asks for nothing else. The small fan service it installs (`sidecar/`) runs on the .NET Framework
+that ships with Windows and loads LibreHardwareMonitor from its own folder.
+
+## Build the installer
+
+```
+npm run build:msi
+```
+
+builds the fan service and then the MSI at `src-tauri/target/release/bundle/msi/`. The first run downloads the
+WiX toolset. The wizard page that checks for the programs above is in `src-tauri/installer/main.wxs`.
 
 ## Develop
 
@@ -27,11 +50,10 @@ npm run tauri dev   # desktop app
 npm test            # controller unit tests
 ```
 
-Requires Node, Rust (MSVC toolchain on Windows), WebView2 and the .NET 9 SDK. Build the hardware service once:
+Requires Node, Rust (MSVC toolchain on Windows), WebView2 and a .NET SDK. Build the hardware service once:
 
 ```
-cd sidecar
-dotnet publish -c Release -r win-x64 --self-contained false -o ../sidecar-publish
+npm run sidecar:release
 ```
 
 Environment switches for development: `LFA_NO_ELEVATE=1` runs the hardware service without administrator rights (limited sensors); `LFA_TRACE=1` logs rendered frames per 5 s to `%TEMP%\lfa-trace.log`, which shows whether a hidden window keeps running at full speed.

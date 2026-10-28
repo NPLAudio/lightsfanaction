@@ -2,7 +2,7 @@
   "name": "lightsfanaction",
   "private": true,
   "license": "MIT",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,9 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "sidecar:release": "dotnet build sidecar -c Release -p:DebugType=none -o sidecar-publish",
+    "build:msi": "npm run sidecar:release && tauri build --config src-tauri/tauri.release.conf.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
