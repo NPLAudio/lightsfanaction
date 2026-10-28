@@ -2,6 +2,7 @@ import type { Backend, Device, DeviceKind, FanInfo, HardwareState, RGB, Sensor }
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { Q6_ANSI_POSITIONS } from './keychronQ6'
 import { SimBackend } from './sim'
+import { simulatorActive, useSettings } from '../settings'
 
 interface RgbDevice {
   index: number
@@ -30,7 +31,6 @@ interface HwRaw {
 }
 
 export type HwState = 'off' | 'connecting' | 'on' | 'error'
-const HW_FLAG = 'lfa-hw'
 
 export const IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
@@ -66,21 +66,16 @@ export class HybridBackend implements Backend {
   get hwOn() {
     return this.hwState === 'on'
   }
+  /** Fan control is wanted whenever the setting is on and we are not pretending. */
   get hwWanted() {
-    try {
-      return localStorage.getItem(HW_FLAG) === '1'
-    } catch {
-      return false
-    }
+    return IS_TAURI && useSettings.getState().controlFans && !this.simActive
   }
-  get name() {
-    const lights = this.rgbConnected ? `OpenRGB · ${this.rgbDevices.size} devices` : IS_TAURI ? 'OpenRGB not found' : 'simulated lights'
-    const fans =
-      this.hwState === 'on' ? 'hardware fans' : this.hwState === 'connecting' ? 'starting fan control…' : 'simulated fans'
-    return `${lights} · ${fans}`
+  /** Fake devices, fans and temperatures stand in for hardware (browser, or the developer switch). */
+  get simActive() {
+    return simulatorActive(IS_TAURI)
   }
-  get simulated() {
-    return !this.rgbConnected || !this.hwOn
+  get rgbCount() {
+    return this.rgbDevices.size
   }
 
   /** Starts the elevated sidecar (UAC prompt) and switches fans and sensors to real hardware. */
@@ -93,7 +88,6 @@ export class HybridBackend implements Backend {
       this.hwElevated = await invoke<boolean>('hw_start')
       this.hwRaw = await invoke<HwRaw>('hw_apply', { set: [] })
       this.hwState = 'on'
-      localStorage.setItem(HW_FLAG, '1')
     } catch (e) {
       this.hwState = 'error'
       this.hwError = String(e)
@@ -109,11 +103,6 @@ export class HybridBackend implements Backend {
     }
     this.hwState = 'off'
     this.hwRaw = null
-    try {
-      localStorage.removeItem(HW_FLAG)
-    } catch {
-      /* ignore */
-    }
     this.changed()
   }
 
@@ -127,7 +116,7 @@ export class HybridBackend implements Backend {
 
   async listDevices(): Promise<Device[]> {
     const all = [...(await this.listRgb()), ...(await this.listVia())]
-    return all.length ? all : this.sim.listDevices()
+    return all.length || !this.simActive ? all : this.sim.listDevices()
   }
 
   private viaPaths = new Map<string, string>()
@@ -317,30 +306,43 @@ export class HybridBackend implements Backend {
   }
 
   listFans(): Promise<FanInfo[]> {
-    if (!this.hwOn || !this.hwRaw) return this.sim.listFans()
+    if (!this.hwOn || !this.hwRaw) return this.simActive ? this.sim.listFans() : Promise.resolve([])
     const { sensors, fans } = this.hwRaw
     const find = (re: RegExp) => sensors.find((s) => re.test(s.name))?.id
     return Promise.resolve(
       fans.map((f): FanInfo => {
-        const sensorId = /pump/i.test(f.name)
-          ? (find(/liquid|coolant|water/i) ?? find(/CPU/i))
-          : /gpu/i.test(f.name)
-            ? find(/GPU Core/i)
-            : (find(/CPU.*(package|tctl|die)/i) ?? find(/liquid|coolant|water/i))
-        return { id: f.id, name: f.name, maxRpm: 0, sensorId: sensorId ?? sensors[0]?.id ?? '' }
+        const kind = f.id.startsWith('/gpu') ? 'gpu' : /pump/i.test(f.name) ? 'pump' : 'case'
+        const sensorId =
+          kind === 'pump'
+            ? (find(/liquid|coolant|water/i) ?? find(/CPU/i))
+            : kind === 'gpu'
+              ? find(/GPU Core/i)
+              : (find(/CPU.*(package|tctl|die)/i) ?? find(/liquid|coolant|water/i))
+        return { id: f.id, name: f.name, kind, maxRpm: 0, sensorId: sensorId ?? sensors[0]?.id ?? '' }
       }),
     )
   }
+
+  private hwRelease = new Set<string>()
+
+  /** Hands one fan back to its own firmware control (used when a fan group is switched off). */
+  releaseFan(id: string) {
+    this.hwSet.delete(id)
+    if (this.hwOn) this.hwRelease.add(id)
+  }
+
   setFan(id: string, pct: number) {
     if (this.hwOn) this.hwSet.set(id, pct)
-    else this.sim.setFan(id, pct)
+    else if (this.simActive) this.sim.setFan(id, pct)
   }
   async readState(): Promise<HardwareState> {
-    if (!this.hwOn) return this.sim.readState()
+    if (!this.hwOn) return this.simActive ? this.sim.readState() : { sensors: [], fans: [] }
     const set = [...this.hwSet]
+    const release = [...this.hwRelease]
     this.hwSet.clear()
+    this.hwRelease.clear()
     try {
-      this.hwRaw = await invoke<HwRaw>('hw_apply', { set })
+      this.hwRaw = await invoke<HwRaw>('hw_apply', { set, release })
       return { sensors: this.hwRaw.sensors, fans: this.hwRaw.fans.map((f) => ({ id: f.id, rpm: f.rpm, pct: f.pct })) }
     } catch (e) {
       // sidecar is gone and has already returned fans to firmware control

@@ -1,431 +1,456 @@
-import { backend, sim } from '../lib/backend'
-import { IS_TAURI } from '../lib/hybrid'
-import { CurveEditor } from '../components/CurveEditor'
-import { CRITICAL_TEMP, CURVE_PRESETS, PUMP_MIN_PCT, defaultCritical, evalCurve } from '../lib/curve'
-import type { FanCalibration, FanMode } from '../lib/types'
-import { useStore } from '../store'
-import { useRef, useState } from 'react'
-import { CalibrationStopped, calibrateFan, calibrateMany, useBatch, type CalProgress } from '../calibrate'
-import { previewFan } from '../engine'
-
-const MODES: { id: FanMode; label: string }[] = [
-  { id: 'curve', label: 'Curve' },
-  { id: 'manual', label: 'Manual' },
-  { id: 'full', label: 'Full speed' },
-]
-
-function Slider(props: { label: string; value: number; min: number; max: number; unit: string; step?: number; onChange(v: number): void; hint?: string }) {
-  const id = `s-${props.label.replace(/\W/g, '')}`
-  return (
-    <div className="row" title={props.hint}>
-      <label htmlFor={id}>{props.label}</label>
-      <input id={id} type="range" min={props.min} max={props.max} step={props.step} value={props.value} onChange={(e) => props.onChange(Number(e.target.value))} />
-      <output>{props.value}{props.unit}</output>
-    </div>
-  )
-}
-
-function HardwarePanel() {
-  const busy = backend.hwState === 'connecting'
-  const enable = async () => {
-    await backend.enableHw()
-    if (backend.hwOn) await useStore.getState().init()
-  }
-  const disable = async () => {
-    await backend.disableHw()
-    await useStore.getState().init()
-  }
-
-  if (backend.hwOn) {
-    return (
-      <div className="notice">
-        <span>
-          Controlling real fans through LibreHardwareMonitor.
-          {!backend.hwElevated && ' Not running as administrator, so motherboard fans and many sensors are unavailable.'}
-        </span>
-        <button className="btn" onClick={() => void disable()}>Hand back to firmware</button>
-      </div>
-    )
-  }
-  return (
-    <div className="notice">
-      <span>
-        {IS_TAURI
-          ? 'These fans and temperatures are simulated. Real control needs administrator rights for the hardware driver; fans return to firmware control whenever the app closes.'
-          : 'Fans and temperatures are simulated. Run the desktop app to control real hardware.'}
-        {backend.hwError && <b className="err"> {backend.hwError}</b>}
-      </span>
-      {IS_TAURI && (
-        <button className="btn primary" disabled={busy} onClick={() => void enable()}>
-          {busy ? 'Waiting for permission…' : 'Enable hardware control'}
-        </button>
-      )}
-    </div>
-  )
-}
+import { useMemo, useState } from 'react'
+import { ChevronDownIcon, FanIcon, Loader2Icon, ThermometerIcon, TriangleAlertIcon } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Label } from '@/components/ui/label'
+import { Progress } from '@/components/ui/progress'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Slider } from '@/components/ui/slider'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { BatchPanel } from '@/components/BatchPanel'
+import { CalibrationPanel, ListenTest } from '@/components/CalibrationPanel'
+import { CurveEditor } from '@/components/CurveEditor'
+import { Disclosure } from '@/components/Disclosure'
+import { SliderField, SwitchField } from '@/components/Field'
+import { startBatch, useBatch } from '@/calibrate'
+import { backend } from '@/lib/backend'
+import { CRITICAL_TEMP, CURVE_PRESETS, PUMP_MIN_PCT, defaultCritical, evalCurve } from '@/lib/curve'
+import { IS_TAURI } from '@/lib/hybrid'
+import type { FanConfig, FanLive, FanMode, Sensor } from '@/lib/types'
+import { cn } from '@/lib/utils'
+import { kindEnabled, useSettings } from '@/settings'
+import { useStore } from '@/store'
 
 const WARNINGS = {
   stalled: 'Not turning at the speed it was given. The floor was raised; check the fan.',
   ignored: 'The hardware is not following commands. Another program may control this fan, or its controller ignores software speeds.',
 } as const
 
-function RpmGraph({ cal }: { cal: FanCalibration }) {
-  const W = 240, H = 90, pad = 6
-  const pts = cal.map
-  const max = Math.max(cal.maxRpm, 1)
-  const x = (pct: number) => pad + (pct / 100) * (W - pad * 2)
-  const y = (rpm: number) => H - pad - (rpm / max) * (H - pad * 2)
-  const d = pts.map((m, i) => `${i ? 'L' : 'M'}${x(m.pct)},${y(m.rpm)}`).join(' ')
+function shortTemps(sensors: Sensor[]) {
+  const pick = (re: RegExp, label: string) => {
+    const s = sensors.find((x) => re.test(x.name))
+    return s ? `${label} ${Math.round(s.value)}°` : null
+  }
+  const parts = [pick(/CPU.*(package|tctl|die)/i, 'CPU'), pick(/GPU Core/i, 'GPU'), pick(/liquid|coolant|water/i, 'Liquid')].filter(Boolean)
+  return parts.length ? parts.join(' · ') : sensors.slice(0, 3).map((s) => `${Math.round(s.value)}°`).join(' · ')
+}
+
+function FanCard({
+  fan,
+  live,
+  active,
+  selecting,
+  checked,
+  onSelect,
+  onCheck,
+}: {
+  fan: FanConfig
+  live?: FanLive
+  active: boolean
+  selecting: boolean
+  checked: boolean
+  onSelect(): void
+  onCheck(): void
+}) {
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="rpm-graph" role="img" aria-label="Measured speed against duty">
-      <path d={d} fill="none" stroke="var(--accent)" strokeWidth="2" />
-      {pts.map((m) => (
-        <circle key={m.pct} cx={x(m.pct)} cy={y(m.rpm)} r="3" fill="var(--accent-2)" />
-      ))}
-    </svg>
+    <div className="relative">
+      <button
+        type="button"
+        onClick={selecting ? onCheck : onSelect}
+        aria-pressed={active}
+        className={cn(
+          'flex h-full w-full flex-col gap-2 rounded-xl border bg-card p-3 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50',
+          active && !selecting && 'border-primary ring-1 ring-primary',
+        )}
+      >
+        <span className="truncate pr-6 text-sm font-medium">{fan.name}</span>
+        <span className="text-2xl font-semibold tabular-nums">
+          {live ? live.rpm : '–'}
+          <span className="ml-1 text-xs font-normal text-muted-foreground">RPM</span>
+        </span>
+        <Progress value={live?.pct ?? 0} />
+        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          {live?.pct ?? 0}% · {live?.note ?? fan.mode}
+          {live?.warning && (
+            <Badge variant="destructive" title={WARNINGS[live.warning]}>
+              <TriangleAlertIcon /> {live.warning === 'stalled' ? 'Stalled' : 'Not responding'}
+            </Badge>
+          )}
+        </span>
+      </button>
+      {selecting && (
+        <Checkbox
+          checked={checked}
+          onCheckedChange={onCheck}
+          aria-label={`Select ${fan.name}`}
+          className="absolute top-3 right-3"
+        />
+      )}
+    </div>
   )
 }
 
-function CalibrationPanel({ fanId, pump }: { fanId: string; pump: boolean }) {
-  const cal = useStore((s) => s.calibrations[fanId])
-  const setCalibration = useStore((s) => s.setCalibration)
-  const [progress, setProgress] = useState<CalProgress | null>(null)
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
-  const abort = useRef<AbortController | null>(null)
-  const running = progress !== null
-  const batchRunning = useBatch((s) => s.running)
+function Summary({ children }: { children: React.ReactNode }) {
+  return <span className="ml-3 truncate text-xs font-normal text-muted-foreground">{children}</span>
+}
 
-  const start = async () => {
-    abort.current = new AbortController()
-    setMessage(null)
-    setProgress({ phase: 'starting', pct: 100, rpm: 0, done: 0, total: 1, points: [] })
-    try {
-      const out = await calibrateFan(fanId, setProgress, abort.current.signal)
-      if (out.cal) setCalibration(fanId, out.cal)
-      setMessage({ ok: !!out.cal, text: out.message })
-    } catch (e) {
-      setMessage({ ok: false, text: e instanceof CalibrationStopped ? e.message : String(e) })
-    } finally {
-      setProgress(null)
-    }
-  }
+function FanDetail({ fan, live, sensors }: { fan: FanConfig; live?: FanLive; sensors: Sensor[] }) {
+  const { patchFan, setCurve } = useStore()
+  const cal = useStore((s) => s.calibrations[fan.id])
+  const ids = [fan.sensorId, ...fan.extraSensorIds]
+  const names = ids.map((id) => sensors.find((s) => s.id === id)?.name ?? 'unavailable')
+  const temp = sensors.find((s) => s.id === fan.sensorId)?.value
+  const emergency =
+    fan.criticalTemp ?? Math.min(CRITICAL_TEMP, ...ids.map((id) => defaultCritical(sensors.find((x) => x.id === id)?.name ?? '')))
+  const sensorItems = sensors.map((s) => ({ value: s.id, label: s.name }))
 
   return (
-    <div className="panel" style={{ marginTop: 14 }}>
-      <div className="editor-head">
-        <h2>Calibration</h2>
-        {running ? (
-          <button className="btn" onClick={() => abort.current?.abort()}>Cancel</button>
-        ) : (
-          <button className="btn primary" disabled={pump || batchRunning} onClick={() => void start()}>
-            {cal ? 'Calibrate again' : 'Calibrate this fan'}
-          </button>
-        )}
-      </div>
-      {pump && <p className="muted note">Pumps are never calibrated: stopping one can damage the CPU.</p>}
-      {!running && !cal && !pump && (
-        <p className="muted note">
-          Measures the speed at 100%, where the fan stalls on the way down, and what it takes to restart. The floor,
-          stop and start points then follow the fan instead of a guess. It takes a couple of minutes, and the fan speeds
-          up and slows down during the test. It stops by itself if the system warms up.
-        </p>
-      )}
-      {running && progress && (
-        <div>
-          <p className="muted note">
-            {progress.phase}: <b>{progress.pct}%</b> to {progress.rpm} RPM
-          </p>
-          <span className="bar"><i style={{ width: `${Math.min(100, (progress.done / progress.total) * 100)}%` }} /></span>
-        </div>
-      )}
-      {cal && !running && (
-        <>
-          <div className="cal-grid">
-            <span className="muted">Top speed</span><b>{cal.maxRpm} RPM</b>
-            <span className="muted">Minimum running</span><b>{cal.minRunPct}%</b>
-            <span className="muted">Stalls at</span><b>{cal.stopPct > 0 ? `${cal.stopPct}%` : 'never'}</b>
-            <span className="muted">Restart needs</span><b>{cal.startPct > 0 ? `${cal.startPct}%` : 'n/a'}</b>
+    <Card>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-lg font-semibold">{fan.name}</h2>
+            <p className="flex items-center gap-1.5 truncate text-sm text-muted-foreground">
+              <ThermometerIcon className="size-3.5" />
+              {fan.extraSensorIds.length ? `Following ${names.length} sensors` : names[0]}
+              {temp !== undefined && ` · ${temp.toFixed(0)}°C`}
+            </p>
           </div>
-          <RpmGraph cal={cal} />
-          <button className="chip" onClick={() => setCalibration(fanId, null)}>Clear measurements</button>
-        </>
-      )}
-      {message && <p className={`muted note ${message.ok ? '' : 'err'}`}>{message.text}</p>}
-    </div>
-  )
-}
+          <ToggleGroup
+            value={[fan.mode]}
+            onValueChange={(v) => v[0] && patchFan(fan.id, { mode: v[0] as FanMode })}
+            variant="outline"
+            spacing={0}
+          >
+            <ToggleGroupItem value="curve">Curve</ToggleGroupItem>
+            <ToggleGroupItem value="manual">Fixed</ToggleGroupItem>
+            <ToggleGroupItem value="full">Full speed</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
 
-function ListenTest({ fanId, maxPct, onUse }: { fanId: string; maxPct: number; onUse(v: number): void }) {
-  const [pct, setPct] = useState(maxPct < 100 ? maxPct : 50)
-  const [playing, setPlaying] = useState(false)
-  const play = (v: number) => {
-    setPct(v)
-    if (playing) previewFan(fanId, v, 20)
-  }
-  return (
-    <div className="listen">
-      <p className="muted note">
-        Listen test: run the fan at a fixed speed for 20 seconds, find the loudest speed you can live with, then use it
-        as the quiet cap.
-      </p>
-      <div className="row">
-        <label htmlFor="listen">Test speed</label>
-        <input id="listen" type="range" min={0} max={100} value={pct} onChange={(e) => play(Number(e.target.value))} />
-        <output>{pct}%</output>
-      </div>
-      <div className="lcd-actions" style={{ marginTop: 8 }}>
-        <button
-          className="btn"
-          onClick={() => {
-            if (playing) {
-              previewFan(fanId, null)
-              setPlaying(false)
-            } else {
-              previewFan(fanId, pct, 20)
-              setPlaying(true)
-              setTimeout(() => setPlaying(false), 20000)
-            }
-          }}
-        >
-          {playing ? 'Stop test' : 'Play'}
-        </button>
-        <button className="btn" onClick={() => onUse(pct)}>Use {pct}% as quiet cap</button>
-      </div>
-    </div>
-  )
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  queued: 'Waiting',
-  cooling: 'Cooling down',
-  running: 'Measuring',
-  done: 'Done',
-  failed: 'Not measured',
-  skipped: 'Skipped',
-}
-
-function BatchPanel({ onClose }: { onClose(): void }) {
-  const { running, items, current } = useBatch()
-  const finished = items.filter((i) => i.status === 'done' || i.status === 'failed' || i.status === 'skipped').length
-  return (
-    <div className="panel batch">
-      <div className="editor-head">
-        <h2>Calibrating {items.length} fans</h2>
-        {running ? (
-          <button className="btn" onClick={() => batchAbort?.abort()}>Cancel</button>
-        ) : (
-          <button className="btn" onClick={onClose}>Close</button>
+        {live?.warning && (
+          <Alert variant="destructive">
+            <TriangleAlertIcon />
+            <AlertTitle>{live.warning === 'stalled' ? 'Fan stalled' : 'Fan not responding'}</AlertTitle>
+            <AlertDescription>{WARNINGS[live.warning]}</AlertDescription>
+          </Alert>
         )}
+
+        {fan.mode === 'curve' && (
+          <div className="space-y-2">
+            <CurveEditor points={fan.curve} onChange={(c) => setCurve(fan.id, c)} temp={temp} pct={live?.pct} />
+            <div className="flex flex-wrap items-center gap-3">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button variant="outline" size="sm">
+                      Preset <ChevronDownIcon />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="start">
+                  {Object.entries(CURVE_PRESETS).map(([name, pts]) => (
+                    <DropdownMenuItem key={name} onClick={() => setCurve(fan.id, pts.map((p) => ({ ...p })))}>
+                      {name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {temp !== undefined && (
+                <span className="text-sm text-muted-foreground">
+                  Curve says <b className="text-foreground">{Math.round(evalCurve(fan.curve, temp))}%</b> at {temp.toFixed(0)}°C
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        {fan.mode === 'manual' && (
+          <div className="space-y-4 py-6">
+            <p className="text-center text-5xl font-semibold tabular-nums">{fan.manual}%</p>
+            <Slider
+              value={fan.manual}
+              min={0}
+              max={100}
+              aria-label="Fixed fan speed"
+              onValueChange={(v) => patchFan(fan.id, { manual: Array.isArray(v) ? v[0] : v })}
+            />
+          </div>
+        )}
+        {fan.mode === 'full' && <p className="py-6 text-center text-sm text-muted-foreground">Running at 100% until you switch modes.</p>}
+
+        <Accordion multiple className="rounded-xl border px-4">
+          <AccordionItem value="source">
+            <AccordionTrigger>
+              Temperature source<Summary>{fan.extraSensorIds.length ? `${names.length} sensors, ${fan.mix === 'max' ? 'hottest' : 'average'}` : names[0]}</Summary>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-3">
+              <Select
+                value={fan.sensorId}
+                items={sensorItems}
+                onValueChange={(v) =>
+                  v && patchFan(fan.id, { sensorId: v, extraSensorIds: fan.extraSensorIds.filter((x) => x !== v) })
+                }
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {sensors.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Disclosure title="Also follow other sensors" summary={fan.extraSensorIds.length ? `${fan.extraSensorIds.length} added` : 'None'} className="border-0 bg-muted/30">
+                <ToggleGroup
+                  value={[fan.mix]}
+                  onValueChange={(v) => v[0] && patchFan(fan.id, { mix: v[0] as FanConfig['mix'] })}
+                  variant="outline"
+                  spacing={0}
+                >
+                  <ToggleGroupItem value="max">Hottest</ToggleGroupItem>
+                  <ToggleGroupItem value="avg">Average</ToggleGroupItem>
+                </ToggleGroup>
+                <div className="space-y-2">
+                  {sensors.filter((s) => s.id !== fan.sensorId).map((s) => (
+                    <label key={s.id} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={fan.extraSensorIds.includes(s.id)}
+                        onCheckedChange={(on) =>
+                          patchFan(fan.id, {
+                            extraSensorIds: on ? [...fan.extraSensorIds, s.id] : fan.extraSensorIds.filter((x) => x !== s.id),
+                          })
+                        }
+                      />
+                      {s.name}
+                    </label>
+                  ))}
+                </div>
+              </Disclosure>
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="limits">
+            <AccordionTrigger>
+              Speed limits<Summary>min {fan.minPct}% · quiet cap {fan.maxPct}%</Summary>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-4">
+              <SliderField
+                label="Minimum speed"
+                value={fan.minPct}
+                min={0}
+                max={60}
+                unit="%"
+                hint="0% lets the fan stop completely at low temperatures."
+                onChange={(v) => patchFan(fan.id, { minPct: fan.pump ? Math.max(v, PUMP_MIN_PCT) : v })}
+              />
+              <SliderField
+                label="Quiet cap"
+                value={fan.maxPct}
+                min={20}
+                max={100}
+                unit="%"
+                hint="The highest speed while things are not getting hot."
+                onChange={(v) => patchFan(fan.id, { maxPct: v })}
+              />
+              <ListenTest fanId={fan.id} maxPct={fan.maxPct} onUse={(v) => patchFan(fan.id, { maxPct: Math.max(20, v) })} />
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="response">
+            <AccordionTrigger>
+              Response<Summary>smoothing {fan.smoothSec}s · hold {fan.holdSec}s</Summary>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-4">
+              <SliderField label="Smoothing" value={fan.smoothSec} min={0} max={30} unit=" s" hint="Averages the temperature over this long so spikes do not change the speed." onChange={(v) => patchFan(fan.id, { smoothSec: v })} />
+              <SliderField label="Hysteresis" value={fan.hysteresis} min={0} max={10} unit="°C" hint="The temperature must fall this far before the fan slows down." onChange={(v) => patchFan(fan.id, { hysteresis: v })} />
+              <SliderField label="Speed-up rate" value={fan.stepUp} min={1} max={100} unit="%/s" hint="The fastest the speed may rise." onChange={(v) => patchFan(fan.id, { stepUp: v })} />
+              <SliderField label="Slow-down rate" value={fan.stepDown} min={1} max={30} unit="%/s" hint="The fastest the speed may fall." onChange={(v) => patchFan(fan.id, { stepDown: v })} />
+              <SliderField label="Hold after speeding up" value={fan.holdSec} min={0} max={60} unit=" s" hint="Keeps the speed this long before it may slow down, so it does not pump up and down." onChange={(v) => patchFan(fan.id, { holdSec: v })} />
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="safety">
+            <AccordionTrigger>
+              Safety<Summary>emergency at {emergency}°C</Summary>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-4">
+              <SliderField
+                label="Emergency temperature"
+                value={emergency}
+                min={40}
+                max={110}
+                unit="°C"
+                hint="At or above this the fan runs at 100%, whatever else is set. It also goes to 100% if a source cannot be read."
+                onChange={(v) => patchFan(fan.id, { criticalTemp: v })}
+              />
+              <SwitchField
+                label={`Treat as a pump (never below ${PUMP_MIN_PCT}%)`}
+                description="For a pump plugged into an ordinary fan header."
+                checked={fan.pump}
+                onChange={(v) => patchFan(fan.id, { pump: v, minPct: v ? Math.max(fan.minPct, PUMP_MIN_PCT) : fan.minPct })}
+              />
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="calibration">
+            <AccordionTrigger>
+              Calibration<Summary>{cal ? `stalls at ${cal.stopPct ? `${cal.stopPct}%` : 'never'}, restarts at ${cal.startPct ? `${cal.startPct}%` : 'n/a'}` : 'not measured'}</Summary>
+            </AccordionTrigger>
+            <AccordionContent>
+              <CalibrationPanel fanId={fan.id} pump={fan.pump} />
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </CardContent>
+    </Card>
+  )
+}
+
+function EmptyFans({ hiddenCount, onOpenSettings }: { hiddenCount: number; onOpenSettings(): void }) {
+  const { controlFans, set } = useSettings()
+  const connecting = backend.hwState === 'connecting'
+  const retry = async () => {
+    await backend.enableHw()
+    if (backend.hwOn) await useStore.getState().init()
+  }
+
+  let title = 'No fans found'
+  let body = 'Nothing controllable was reported by the hardware.'
+  let action: React.ReactNode = null
+
+  if (!IS_TAURI && !backend.simActive) {
+    body = 'Fan control is only available in the desktop app.'
+  } else if (!backend.simActive && !controlFans) {
+    title = 'Fan control is off'
+    body = 'Every fan is on its own firmware settings. Turn control on to see and tune them.'
+    action = <Button size="sm" onClick={() => set({ controlFans: true })}>Turn on fan control</Button>
+  } else if (!backend.simActive && connecting) {
+    title = 'Waiting for permission'
+    body = 'Windows is asking for administrator permission so the app can reach the fans.'
+    action = <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+  } else if (!backend.simActive && !backend.hwOn) {
+    title = 'Fan control is not running'
+    body = backend.hwError ?? 'The hardware service did not start.'
+    action = <Button size="sm" onClick={() => void retry()}>Try again</Button>
+  } else if (hiddenCount > 0) {
+    body = `${hiddenCount} fan${hiddenCount === 1 ? ' is' : 's are'} hidden because pumps and graphics card fans are left alone by default.`
+    action = <Button size="sm" variant="outline" onClick={onOpenSettings}>Open settings</Button>
+  }
+
+  return (
+    <div className="grid h-full place-items-center p-6 text-center">
+      <div className="max-w-sm space-y-3">
+        <FanIcon className="mx-auto size-8 text-muted-foreground" />
+        <p className="font-medium">{title}</p>
+        <p className="text-sm text-muted-foreground">{body}</p>
+        <div className="flex justify-center">{action}</div>
       </div>
-      <span className="bar"><i style={{ width: `${items.length ? (finished / items.length) * 100 : 0}%` }} /></span>
-      <ul className="batch-list">
-        {items.map((i) => (
-          <li key={i.id} className={`b-${i.status}`}>
-            <span className="b-name">{i.name}</span>
-            <span className="b-status">{STATUS_LABEL[i.status]}</span>
-            <span className="muted b-text">
-              {i.status === 'running' && current ? `${current.phase}: ${current.pct}% to ${current.rpm} RPM` : i.text}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }
 
-let batchAbort: AbortController | null = null
-
-export function FansPage() {
-  const { fans, live, sensors, selectedFan, selectFan, patchFan, setCurve } = useStore()
-  const [stress, setStress] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [showBatch, setShowBatch] = useState(false)
+export function FansPage({ onOpenSettings }: { onOpenSettings(): void }) {
+  const { fans, fanInfo, live, sensors, selectedFan, selectFan } = useStore()
+  const prefs = useSettings()
   const batchRunning = useBatch((s) => s.running)
   const batchItems = useBatch((s) => s.items)
+  const [selecting, setSelecting] = useState(false)
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [showBatch, setShowBatch] = useState(false)
+
+  const kinds = useMemo(() => new Map(fanInfo.map((i) => [i.id, i.kind])), [fanInfo])
+  const present = fans.filter((f) => kinds.has(f.id))
+  const visible = present.filter((f) => kindEnabled(kinds.get(f.id)!, prefs))
+  const hiddenCount = present.length - visible.length
+  const fan = visible.find((f) => f.id === selectedFan) ?? visible[0]
+
+  if (visible.length === 0 || !fan) return <EmptyFans hiddenCount={hiddenCount} onOpenSettings={onOpenSettings} />
+
   const toggle = (id: string) =>
-    setSelected((cur) => {
+    setChecked((cur) => {
       const next = new Set(cur)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  const fan = fans.find((f) => f.id === selectedFan)
-  if (!fan) return null
-  const temp = sensors.find((s) => s.id === fan.sensorId)?.value
-  const emergency =
-    fan.criticalTemp ??
-    Math.min(CRITICAL_TEMP, ...[fan.sensorId, ...fan.extraSensorIds].map((id) => defaultCritical(sensors.find((x) => x.id === id)?.name ?? '')))
-  const l = live[fan.id]
+  const leaveSelect = () => {
+    setSelecting(false)
+    setChecked(new Set())
+  }
 
   return (
-    <div className="main wide">
-      <header className="page-head">
-        <div>
-          <h1>Fans</h1>
-          <p className="muted">Speed follows a temperature curve. Drag points, click to add, double-click to remove.</p>
-        </div>
-        {!backend.hwOn && (
-          <button
-            className={`btn ${stress ? 'hot' : ''}`}
-            onClick={() => {
-              sim.stress = !stress
-              setStress(!stress)
-            }}
-          >
-            {stress ? 'Stop stress test' : 'Simulate heavy load'}
-          </button>
-        )}
-      </header>
-
-      <HardwarePanel />
-
-
-      <div className="sensors">
-        {sensors.map((s) => (
-          <div key={s.id} className={`sensor ${s.value >= CRITICAL_TEMP ? 'crit' : ''}`}>
-            <span className="muted">{s.name}</span>
-            <strong>{s.value.toFixed(1)}°C</strong>
-          </div>
-        ))}
-      </div>
-
-      <div className="fan-tools">
-        <button className="chip" disabled={batchRunning} onClick={() => setSelected(new Set(fans.filter((f) => !f.pump).map((f) => f.id)))}>
-          Select all fans
-        </button>
-        <button className="chip" disabled={batchRunning || selected.size === 0} onClick={() => setSelected(new Set())}>Clear selection</button>
-        <button
-          className="btn primary"
-          disabled={batchRunning || selected.size === 0}
-          title="Measures the selected fans one after another"
-          onClick={() => {
-            batchAbort = new AbortController()
-            setShowBatch(true)
-            void calibrateMany([...selected], batchAbort.signal)
-          }}
-        >
-          Calibrate selected ({selected.size})
-        </button>
-      </div>
-
-      {showBatch && batchItems.length > 0 && <BatchPanel onClose={() => setShowBatch(false)} />}
-
-      <div className="fan-cards">
-        {fans.map((f) => {
-          const lv = live[f.id]
-          return (
-            <div key={f.id} className="fan-wrap">
-              <label className="fan-select" title="Select for calibration">
-                <input
-                  type="checkbox"
-                  checked={selected.has(f.id)}
-                  disabled={batchRunning}
-                  aria-label={`Select ${f.name}`}
-                  onChange={() => toggle(f.id)}
-                />
-              </label>
-            <button className={`fan-card ${f.id === fan.id ? 'on' : ''}`} onClick={() => selectFan(f.id)}>
-              <span className="fan-name">{f.name}</span>
-              <span className="rpm">{lv ? lv.rpm : '–'}<small> RPM</small></span>
-              <span className="bar"><i style={{ width: `${lv?.pct ?? 0}%` }} /></span>
-              <span className="muted">{lv?.pct ?? 0}% · {lv?.note ?? f.mode}</span>
-              {lv?.warning && <span className="warn-badge" title={WARNINGS[lv.warning]}>{lv.warning === 'stalled' ? 'Stalled' : 'Not responding'}</span>}
-            </button>
-            </div>
-          )
-        })}
-      </div>
-
-      <div className="editor">
-        <div className="panel">
-          <div className="editor-head">
-            <h2>{fan.name}</h2>
-            <div className="seg" role="group" aria-label="Control mode">
-              {MODES.map((m) => (
-                <button key={m.id} className={fan.mode === m.id ? 'on' : ''} onClick={() => patchFan(fan.id, { mode: m.id })}>
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {fan.mode === 'curve' && (
+    <ScrollArea className="h-full">
+      <div className="mx-auto max-w-4xl space-y-4 p-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="flex-1 text-xl font-semibold">Fans</h1>
+          {selecting ? (
             <>
-              <CurveEditor
-                points={fan.curve}
-                onChange={(c) => setCurve(fan.id, c)}
-                temp={temp}
-                pct={l?.pct}
-              />
-              <div className="presets">
-                <span className="muted">Presets</span>
-                {Object.entries(CURVE_PRESETS).map(([name, pts]) => (
-                  <button key={name} className="chip" onClick={() => setCurve(fan.id, pts.map((p) => ({ ...p })))}>{name}</button>
-                ))}
-              </div>
+              <Button size="sm" variant="ghost" onClick={() => setChecked(new Set(visible.filter((f) => !f.pump).map((f) => f.id)))}>
+                Select all
+              </Button>
+              <Button
+                size="sm"
+                disabled={checked.size === 0 || batchRunning}
+                onClick={() => {
+                  setShowBatch(true)
+                  startBatch([...checked])
+                  leaveSelect()
+                }}
+              >
+                Calibrate {checked.size || ''}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={leaveSelect}>Cancel</Button>
             </>
+          ) : (
+            <Button size="sm" variant="outline" disabled={batchRunning} onClick={() => setSelecting(true)}>
+              Calibrate…
+            </Button>
           )}
-          {fan.mode === 'manual' && (
-            <div className="big-dial">
-              <strong>{fan.manual}%</strong>
-              <input type="range" min={0} max={100} value={fan.manual} aria-label="Fixed fan speed" onChange={(e) => patchFan(fan.id, { manual: Number(e.target.value) })} />
-            </div>
-          )}
-          {fan.mode === 'full' && <p className="muted pad">Running at 100% until you switch modes.</p>}
         </div>
 
-        <div className="panel side">
-          <h2>Settings</h2>
-          {l?.warning && <p className="warn-note">{WARNINGS[l.warning]}</p>}
-          <div className="row">
-            <label htmlFor="src">Temperature source</label>
-            <select id="src" value={fan.sensorId} onChange={(e) => patchFan(fan.id, { sensorId: e.target.value, extraSensorIds: fan.extraSensorIds.filter((x) => x !== e.target.value) })}>
-              {sensors.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </div>
-          <details className="more-sources">
-            <summary>Also follow ({fan.extraSensorIds.length})</summary>
-            <div className="seg" role="group" aria-label="How sources combine" style={{ margin: '6px 0' }}>
-              <button className={fan.mix === 'max' ? 'on' : ''} onClick={() => patchFan(fan.id, { mix: 'max' })}>Hottest</button>
-              <button className={fan.mix === 'avg' ? 'on' : ''} onClick={() => patchFan(fan.id, { mix: 'avg' })}>Average</button>
-            </div>
-            {sensors.filter((s) => s.id !== fan.sensorId).map((s) => (
-              <label key={s.id} className="check">
-                <input
-                  type="checkbox"
-                  checked={fan.extraSensorIds.includes(s.id)}
-                  onChange={(e) =>
-                    patchFan(fan.id, {
-                      extraSensorIds: e.target.checked ? [...fan.extraSensorIds, s.id] : fan.extraSensorIds.filter((x) => x !== s.id),
-                    })
-                  }
-                />
-                {s.name}
-              </label>
-            ))}
-          </details>
-          <label className="check">
-            <input type="checkbox" checked={fan.pump} onChange={(e) => patchFan(fan.id, { pump: e.target.checked, minPct: e.target.checked ? Math.max(fan.minPct, PUMP_MIN_PCT) : fan.minPct })} />
-            This is a pump (never below {PUMP_MIN_PCT}%)
-          </label>
-          <Slider label="Minimum speed" value={fan.minPct} min={0} max={60} unit="%" hint="0% lets the fan stop completely at low temperatures" onChange={(v) => patchFan(fan.id, { minPct: fan.pump ? Math.max(v, PUMP_MIN_PCT) : v })} />
-          <Slider label="Quiet cap" value={fan.maxPct} min={20} max={100} unit="%" hint="Highest speed while it is not getting hot" onChange={(v) => patchFan(fan.id, { maxPct: v })} />
-          <Slider label="Smoothing" value={fan.smoothSec} min={0} max={30} unit=" s" hint="Averages the temperature over this long, so spikes do not change the speed" onChange={(v) => patchFan(fan.id, { smoothSec: v })} />
-          <Slider label="Hysteresis" value={fan.hysteresis} min={0} max={10} unit="°C" hint="Temperature must fall this far before the fan slows" onChange={(v) => patchFan(fan.id, { hysteresis: v })} />
-          <Slider label="Speed-up rate" value={fan.stepUp} min={1} max={100} unit="%/s" hint="Highest rate the speed may rise" onChange={(v) => patchFan(fan.id, { stepUp: v })} />
-          <Slider label="Slow-down rate" value={fan.stepDown} min={1} max={30} unit="%/s" hint="Highest rate the speed may fall" onChange={(v) => patchFan(fan.id, { stepDown: v })} />
-          <Slider label="Hold after speeding up" value={fan.holdSec} min={0} max={60} unit=" s" hint="Keeps the speed this long before it may slow down, to avoid pumping" onChange={(v) => patchFan(fan.id, { holdSec: v })} />
-          <Slider label="Emergency temperature" value={emergency} min={40} max={110} unit="°C" hint="At or above this the fan runs at 100%, whatever else is set" onChange={(v) => patchFan(fan.id, { criticalTemp: v })} />
-          <p className="muted note">
-            Safety: at {emergency}°C, or if a source cannot be read, this fan goes to 100%.
-            {temp !== undefined && fan.mode === 'curve' && <> Curve says <b>{Math.round(evalCurve(fan.curve, temp))}%</b> at {temp.toFixed(0)}°C.</>}
-          </p>
-          <ListenTest fanId={fan.id} maxPct={fan.maxPct} onUse={(v) => patchFan(fan.id, { maxPct: Math.max(20, v) })} />
+        {showBatch && batchItems.length > 0 && <BatchPanel onClose={() => setShowBatch(false)} />}
+
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
+          {visible.map((f) => (
+            <FanCard
+              key={f.id}
+              fan={f}
+              live={live[f.id]}
+              active={f.id === fan.id}
+              selecting={selecting}
+              checked={checked.has(f.id)}
+              onSelect={() => selectFan(f.id)}
+              onCheck={() => toggle(f.id)}
+            />
+          ))}
         </div>
+
+        {hiddenCount > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {hiddenCount} fan{hiddenCount === 1 ? '' : 's'} hidden and left to firmware (pumps, graphics card).{' '}
+            <button type="button" className="underline underline-offset-2" onClick={onOpenSettings}>Change in settings</button>
+          </p>
+        )}
+
+        {sensors.length > 0 && (
+          <Disclosure title="Temperatures" summary={shortTemps(sensors)}>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-x-6 gap-y-2">
+              {sensors.map((s) => (
+                <div key={s.id} className="flex items-baseline justify-between gap-3 text-sm">
+                  <Label className="truncate font-normal text-muted-foreground">{s.name}</Label>
+                  <span className="tabular-nums">{s.value.toFixed(1)}°C</span>
+                </div>
+              ))}
+            </div>
+          </Disclosure>
+        )}
+
+        <FanDetail key={fan.id} fan={fan} live={live[fan.id]} sensors={sensors} />
       </div>
-      <CalibrationPanel fanId={fan.id} pump={fan.pump} />
-    </div>
+    </ScrollArea>
   )
 }

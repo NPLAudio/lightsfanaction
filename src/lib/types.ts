@@ -145,7 +145,10 @@ export interface HardwareState {
   fans: { id: string; rpm: number; pct?: number }[]
 }
 
+export type FanKind = 'case' | 'pump' | 'gpu'
+
 export interface FanInfo {
+  kind: FanKind
   id: string
   name: string
   maxRpm: number
@@ -153,8 +156,6 @@ export interface FanInfo {
 }
 
 export interface Backend {
-  name: string
-  simulated: boolean
   listDevices(): Promise<Device[]>
   setLeds(deviceId: string, colors: RGB[]): void
   listFans(): Promise<FanInfo[]>

@@ -80,6 +80,9 @@ while (!quit)
             switch (root.GetProperty("cmd").GetString())
             {
                 case "apply":
+                    if (root.TryGetProperty("release", out var rel))
+                        foreach (var r in rel.EnumerateArray())
+                            hw.Release(r.GetString()!);
                     if (root.TryGetProperty("set", out var sets))
                         foreach (var s in sets.EnumerateArray())
                             hw.SetFan(s.GetProperty("id").GetString()!, s.GetProperty("pct").GetDouble());
@@ -206,6 +209,17 @@ sealed class Hardware : IDisposable
             var floor = Regex.IsMatch(s.Name + " " + s.Hardware.Name, "pump|aio|water|liquid", RegexOptions.IgnoreCase) ? 50 : 0;
             s.Control.SetSoftware((float)Math.Clamp(pct, floor, 100));
             overridden.Add(s);
+        }
+    }
+
+    /** Hands one control back to the firmware. */
+    public void Release(string id)
+    {
+        lock (gate)
+        {
+            if (!controls.TryGetValue(id, out var s) || s.Control is null) return;
+            try { s.Control.SetDefault(); } catch { /* ignore */ }
+            overridden.Remove(s);
         }
     }
 

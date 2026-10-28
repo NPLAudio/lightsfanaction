@@ -108,9 +108,9 @@ impl Client {
     }
 
     /// Applies fan duties (id, percent), then returns fresh sensor and fan readings.
-    pub fn apply(&mut self, set: &[(String, f64)]) -> Result<Value, String> {
+    pub fn apply(&mut self, set: &[(String, f64)], release: &[String]) -> Result<Value, String> {
         let set: Vec<Value> = set.iter().map(|(id, pct)| json!({ "id": id, "pct": pct })).collect();
-        self.request(&json!({ "cmd": "apply", "set": set }))
+        self.request(&json!({ "cmd": "apply", "set": set, "release": release }))
     }
 
     /// Hands every fan back to firmware control and stops the sidecar.

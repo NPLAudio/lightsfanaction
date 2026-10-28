@@ -48,7 +48,7 @@ interface State {
 const newAssignment = (effectId: string): Assignment => ({ effectId, params: defaultParams(effectId), brightness: 100 })
 
 const defaultFan = (f: FanInfo): FanConfig => {
-  const pump = /pump/i.test(f.name)
+  const pump = f.kind === 'pump' || /pump/i.test(f.name)
   return {
     id: f.id,
     name: f.name,
@@ -98,17 +98,20 @@ export const useStore = create<State>()(
         const { assignments, fans, selectedDevice, selectedFan } = get()
         const a = { ...assignments }
         for (const d of devices) a[d.id] ??= newAssignment(d.kind === 'fan' ? 'spin' : 'rainbow')
-        const f = fanInfo.map((i) => {
+        const present = fanInfo.map((i) => {
           const saved = fans.find((x) => x.id === i.id)
           return saved ? migrateFan(saved, i) : defaultFan(i)
         })
+        // keep the settings of fans that are not reachable right now (hardware control still starting,
+        // or switched off) so they are not lost; the UI and engine only use fans that are present
+        const f = [...present, ...fans.filter((x) => !fanInfo.some((i) => i.id === x.id))]
         set({
           devices,
           fanInfo,
           assignments: a,
           fans: f,
           selectedDevice: devices.some((d) => d.id === selectedDevice) ? selectedDevice : (devices[0]?.id ?? ''),
-          selectedFan: f.some((x) => x.id === selectedFan) ? selectedFan : (f[0]?.id ?? ''),
+          selectedFan: present.some((x) => x.id === selectedFan) ? selectedFan : (present[0]?.id ?? selectedFan),
           ready: true,
         })
       },

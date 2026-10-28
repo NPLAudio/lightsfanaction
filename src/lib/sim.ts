@@ -11,10 +11,11 @@ const DEVICES: Device[] = [
 ]
 
 const FANS: FanInfo[] = [
-  { id: 'cpu', name: 'CPU Fan', maxRpm: 2200, sensorId: 'cpu' },
-  { id: 'front', name: 'Front Intake', maxRpm: 1500, sensorId: 'gpu' },
-  { id: 'rear', name: 'Rear Exhaust', maxRpm: 1500, sensorId: 'cpu' },
-  { id: 'pump', name: 'Pump', maxRpm: 3000, sensorId: 'water' },
+  { id: 'cpu', name: 'CPU Fan', kind: 'case', maxRpm: 2200, sensorId: 'cpu' },
+  { id: 'front', name: 'Front Intake', kind: 'case', maxRpm: 1500, sensorId: 'gpu' },
+  { id: 'rear', name: 'Rear Exhaust', kind: 'case', maxRpm: 1500, sensorId: 'cpu' },
+  { id: 'gpu-fan', name: 'GPU Fan', kind: 'gpu', maxRpm: 2000, sensorId: 'gpu' },
+  { id: 'pump', name: 'Pump', kind: 'pump', maxRpm: 3000, sensorId: 'water' },
 ]
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
@@ -24,6 +25,7 @@ const STALL: Record<string, { stop: number; start: number }> = {
   cpu: { stop: 12, start: 22 },
   front: { stop: 15, start: 28 },
   rear: { stop: 15, start: 28 },
+  'gpu-fan': { stop: 20, start: 30 },
   pump: { stop: 20, start: 20 },
 }
 
@@ -32,8 +34,8 @@ export class SimBackend implements Backend {
   name = 'Simulated hardware'
   simulated = true
   stress = false
-  private duty: Record<string, number> = { cpu: 40, front: 40, rear: 40, pump: 60 }
-  private spinning: Record<string, boolean> = { cpu: true, front: true, rear: true, pump: true }
+  private duty: Record<string, number> = { cpu: 40, front: 40, rear: 40, 'gpu-fan': 40, pump: 60 }
+  private spinning: Record<string, boolean> = { cpu: true, front: true, rear: true, 'gpu-fan': true, pump: true }
   private temps: Record<string, number> = { cpu: 38, gpu: 36, mobo: 33, water: 30 }
   private last = performance.now()
 

@@ -1,58 +1,103 @@
-import { useEffect, useReducer, useState } from 'react'
-import { startEngine } from './engine'
-import { startLcdLoop } from './lcdLive'
-import { backend } from './lib/backend'
-import { IS_TAURI } from './lib/hybrid'
-import { FansPage } from './pages/FansPage'
-import { LcdPage } from './pages/LcdPage'
-import { LightingPage } from './pages/LightingPage'
-import { useStore } from './store'
+import { useEffect, useState } from 'react'
+import { FanIcon, LightbulbIcon, MonitorIcon, SettingsIcon } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { SettingsDialog } from '@/components/SettingsDialog'
+import { StatusPopover } from '@/components/StatusPopover'
+import { startEngine } from '@/engine'
+import { startLcdLoop } from '@/lcdLive'
+import { backend } from '@/lib/backend'
+import { IS_TAURI } from '@/lib/hybrid'
+import { FansPage } from '@/pages/FansPage'
+import { LightingPage } from '@/pages/LightingPage'
+import { ScreenPage } from '@/pages/ScreenPage'
+import { useSettings } from '@/settings'
+import { useStore } from '@/store'
 
-type Page = 'lighting' | 'fans' | 'lcd'
+type Page = 'lighting' | 'fans' | 'screen'
+
+/** Brings fan control in line with the settings: on by default, off hands everything back to firmware. */
+async function syncHardware() {
+  if (backend.hwWanted && !backend.hwOn && backend.hwState !== 'connecting') {
+    await backend.enableHw()
+    if (backend.hwOn) await useStore.getState().init()
+  } else if (!backend.hwWanted && backend.hwState !== 'off') {
+    await backend.disableHw()
+    await useStore.getState().init()
+  }
+}
 
 export default function App() {
   const [page, setPage] = useState<Page>('lighting')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const ready = useStore((s) => s.ready)
-
-  const [, rerender] = useReducer((n: number) => n + 1, 0)
-  useEffect(() => backend.subscribe(rerender), [])
 
   useEffect(() => {
     void (async () => {
       await useStore.getState().init()
       startEngine()
       startLcdLoop()
-      // fan control was on last time: bring it back (this shows the UAC prompt again)
-      if (IS_TAURI && backend.hwWanted) {
-        await backend.enableHw()
-        if (backend.hwOn) await useStore.getState().init()
-      }
+      await syncHardware()
     })()
+
+    // changing the fan switch or the simulator switch takes effect straight away
+    const unsub = useSettings.subscribe((s, prev) => {
+      if (s.controlFans !== prev.controlFans || s.useSimulator !== prev.useSimulator) {
+        void useStore.getState().init().then(syncHardware)
+      }
+    })
+
+    // the tray menu's "Settings…" item
+    let off: (() => void) | undefined
+    if (IS_TAURI) {
+      void import('@tauri-apps/api/event').then(({ listen }) =>
+        listen('open-settings', () => setSettingsOpen(true)).then((u) => (off = u)),
+      )
+    }
+    return () => {
+      unsub()
+      off?.()
+    }
   }, [])
 
   return (
-    <div className="app">
-      <nav className="nav">
-        <div className="brand">
-          <span className="logo" aria-hidden />
-          <b>Lights Fan Action</b>
+    <div className="flex h-full flex-col bg-background text-foreground">
+      <header className="flex items-center gap-3 border-b px-4 py-2">
+        <div className="flex items-center gap-2.5 pr-2">
+          <span
+            aria-hidden
+            className="size-5 rounded-full"
+            style={{ background: 'conic-gradient(var(--primary), var(--brand-teal), oklch(0.7 0.22 350), var(--primary))' }}
+          />
+          <span className="hidden font-semibold sm:inline">Lights Fan Action</span>
         </div>
-        <button className={page === 'lighting' ? 'on' : ''} onClick={() => setPage('lighting')}>Lighting</button>
-        <button className={page === 'fans' ? 'on' : ''} onClick={() => setPage('fans')}>Fans &amp; Cooling</button>
-        <button className={page === 'lcd' ? 'on' : ''} onClick={() => setPage('lcd')}>Kraken screen</button>
-        <div className="grow" />
-        <button
-          className={`backend ${backend.rgbConnected ? '' : 'sim'}`}
-          title={backend.rgbError ?? (IS_TAURI ? 'Click to rescan OpenRGB' : 'Run the desktop app to reach real hardware')}
-          disabled={!IS_TAURI}
-          onClick={() => void useStore.getState().init()}
-        >
-          <i />{backend.name}
-        </button>
-      </nav>
-      <div className="content">
-        {!ready ? <p className="muted pad">Looking for devices…</p> : page === 'lighting' ? <LightingPage /> : page === 'fans' ? <FansPage /> : <LcdPage />}
-      </div>
+        <Tabs value={page} onValueChange={(v) => setPage(v as Page)}>
+          <TabsList>
+            <TabsTrigger value="lighting"><LightbulbIcon /> Lighting</TabsTrigger>
+            <TabsTrigger value="fans"><FanIcon /> Fans</TabsTrigger>
+            <TabsTrigger value="screen"><MonitorIcon /> Screen</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <div className="flex-1" />
+        <StatusPopover />
+        <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => setSettingsOpen(true)}>
+          <SettingsIcon />
+        </Button>
+      </header>
+
+      <main className="min-h-0 flex-1">
+        {!ready ? (
+          <p className="p-6 text-sm text-muted-foreground">Looking for devices…</p>
+        ) : page === 'lighting' ? (
+          <LightingPage />
+        ) : page === 'fans' ? (
+          <FansPage onOpenSettings={() => setSettingsOpen(true)} />
+        ) : (
+          <ScreenPage />
+        )}
+      </main>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }

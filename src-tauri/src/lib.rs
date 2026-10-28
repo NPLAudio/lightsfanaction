@@ -3,12 +3,46 @@ pub mod kraken;
 pub mod openrgb;
 pub mod via;
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use openrgb::{Client, DeviceInfo};
-use tauri::{Manager, State};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, State, WindowEvent};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:6742";
+
+/// Whether closing the window hides it to the tray instead of quitting. The frontend sets this.
+struct CloseToTray(AtomicBool);
+
+/// Lighting frames sent, for the LFA_TRACE diagnostic (shows whether a hidden window keeps running).
+static FRAMES: AtomicU64 = AtomicU64::new(0);
+
+#[tauri::command]
+fn set_close_to_tray(state: State<'_, CloseToTray>, on: bool) {
+    state.0.store(on, Ordering::Relaxed);
+}
+
+/// Diagnostics: with LFA_TRACE set, the frontend reports each rendered frame here so a log shows
+/// whether a hidden window keeps running at full speed.
+#[tauri::command]
+fn trace_enabled() -> bool {
+    std::env::var_os("LFA_TRACE").is_some()
+}
+
+#[tauri::command]
+fn trace_ping() {
+    FRAMES.fetch_add(1, Ordering::Relaxed);
+}
+
+fn show_main(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
 
 #[derive(Default)]
 struct Rgb(Mutex<Option<Client>>);
@@ -28,6 +62,7 @@ async fn openrgb_connect(state: State<'_, Rgb>, addr: Option<String>) -> Result<
 async fn openrgb_update(state: State<'_, Rgb>, frames: Vec<(u32, Vec<u8>)>) -> Result<(), String> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     let client = guard.as_mut().ok_or("OpenRGB is not connected")?;
+    FRAMES.fetch_add(1, Ordering::Relaxed);
     for (idx, rgb) in frames {
         if let Err(e) = client.set_leds(idx, &rgb) {
             *guard = None;
@@ -137,10 +172,14 @@ async fn hw_start(state: State<'_, Hw>) -> Result<bool, String> {
 /// Sets fan duties and returns the latest sensors and fans. Any failure drops the connection;
 /// the sidecar then returns fans to firmware control on its own.
 #[tauri::command]
-async fn hw_apply(state: State<'_, Hw>, set: Vec<(String, f64)>) -> Result<serde_json::Value, String> {
+async fn hw_apply(
+    state: State<'_, Hw>,
+    set: Vec<(String, f64)>,
+    release: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     let client = guard.as_mut().ok_or("hardware control is not running")?;
-    match client.apply(&set) {
+    match client.apply(&set, &release.unwrap_or_default()) {
         Ok(v) => Ok(v),
         Err(e) => {
             *guard = None;
@@ -159,6 +198,66 @@ async fn hw_stop(state: State<'_, Hw>) -> Result<(), String> {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
+        .manage(CloseToTray(AtomicBool::new(true)))
+        .setup(|app| {
+            let open = MenuItem::with_id(app, "open", "Open Lights Fan Action", true, None::<&str>)?;
+            let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit (fans return to firmware)", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &settings, &PredefinedMenuItem::separator(app)?, &quit])?;
+            TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().expect("app icon").clone())
+                .tooltip("Lights Fan Action")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => show_main(app),
+                    "settings" => {
+                        show_main(app);
+                        let _ = app.emit("open-settings", ());
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        show_main(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+            // launched at login with --minimized: stay in the tray until opened
+            if !std::env::args().any(|a| a == "--minimized") {
+                show_main(app.handle());
+            }
+            if std::env::var_os("LFA_TRACE").is_some() {
+                std::thread::spawn(|| {
+                    use std::io::Write;
+                    let path = std::env::temp_dir().join("lfa-trace.log");
+                    let mut last = 0;
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        let now = FRAMES.load(Ordering::Relaxed);
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                            let _ = writeln!(f, "{} lighting frames in the last 5 s", now - last);
+                        }
+                        last = now;
+                    }
+                });
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.app_handle().state::<CloseToTray>().0.load(Ordering::Relaxed) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .manage(Rgb::default())
         .manage(Hw::default())
         .manage(Keyboards::default())
@@ -177,7 +276,10 @@ pub fn run() {
             via_restore,
             hw_start,
             hw_apply,
-            hw_stop
+            hw_stop,
+            set_close_to_tray,
+            trace_enabled,
+            trace_ping
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lights Fan Action")

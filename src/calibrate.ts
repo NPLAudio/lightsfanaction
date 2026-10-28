@@ -147,7 +147,7 @@ export async function calibrateFan(
   if (calibrating.size > 0) throw new CalibrationStopped('Another calibration is already running.')
 
   // simulated hardware answers instantly, so it does not need real spin-up and spin-down time
-  const fast = backend.simulated && !backend.hwOn
+  const fast = backend.simActive && !backend.hwOn
   const settleMin = fast ? 3 : 5
   const settleMax = fast ? 5 : 14
 
@@ -256,4 +256,16 @@ export async function calibrateFan(
   } finally {
     calibrating.delete(fanId)
   }
+}
+
+let batchAbort: AbortController | null = null
+
+/** Starts a batch from the UI; `cancelBatch` stops it and hands every fan back to its curve. */
+export function startBatch(ids: string[]) {
+  batchAbort = new AbortController()
+  void calibrateMany(ids, batchAbort.signal)
+}
+
+export function cancelBatch() {
+  batchAbort?.abort()
 }

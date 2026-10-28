@@ -1,8 +1,10 @@
 import { backend } from './lib/backend'
+import { IS_TAURI, invoke } from './lib/hybrid'
 import { CRITICAL_TEMP, defaultCritical, initialRuntime, mixTemps, stepFan, type FanRuntime } from './lib/curve'
 import { effectById } from './lib/effects'
 import { ledsFor } from './lib/layout'
 import type { FanLive, RGB } from './lib/types'
+import { kindEnabled, useSettings } from './settings'
 import { useStore } from './store'
 
 /** Latest rendered frame per device; previews read this instead of re-rendering. */
@@ -11,7 +13,10 @@ export const frames = new Map<string, RGB[]>()
 const FRAME_MS = 33
 const FAN_MS = 1000
 
+let trace = false
+
 function renderFrames() {
+  if (trace) void invoke('trace_ping')
   const { devices, assignments } = useStore.getState()
   const t = performance.now() / 1000
   for (const d of devices) {
@@ -72,10 +77,22 @@ async function fanTick() {
     const dt = Math.max(0.05, (nowMs - lastFan) / 1000)
     lastFan = nowMs
     const hw = await backend.readState()
-    const { fans, calibrations, setLive } = useStore.getState()
+    const { fans, fanInfo, calibrations, setLive } = useStore.getState()
+    const prefs = useSettings.getState()
+    const kinds = new Map(fanInfo.map((i) => [i.id, i.kind]))
     const live: Record<string, FanLive> = {}
 
     for (const f of fans) {
+      const kind = kinds.get(f.id)
+      if (kind === undefined) continue // not reachable right now
+      // pumps and GPU fans are left to their own firmware unless the settings include them
+      if (!kindEnabled(kind, prefs)) {
+        const w = watches.get(f.id)
+        if (w?.sent !== undefined) backend.releaseFan(f.id)
+        watches.delete(f.id)
+        runtime.delete(f.id)
+        continue
+      }
       const reading = hw.fans.find((x) => x.id === f.id)
       const rpm = reading?.rpm ?? 0
       const w = watches.get(f.id) ?? { seenRpm: false, stalledFor: 0, kicked: false, okFor: 0, mismatch: 0, sentAt: 0 }
@@ -158,6 +175,7 @@ let started = false
 export function startEngine() {
   if (started) return
   started = true
+  if (IS_TAURI) void invoke<boolean>('trace_enabled').then((on) => (trace = on)).catch(() => undefined)
   setInterval(renderFrames, FRAME_MS)
   setInterval(fanTick, FAN_MS)
   void fanTick()
