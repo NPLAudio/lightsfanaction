@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Fan</title>
+		<script src="sdpi-components.js"></script>
+	</head>
+	<body>
+		<sdpi-item label="Fan">
+			<sdpi-select setting="fanId" datasource="getFans" loading="Loading fans..." placeholder="Choose a fan" hot-reload></sdpi-select>
+		</sdpi-item>
+		<sdpi-item>
+			<details>
+				<summary>About this key</summary>
+				<p>Shows the fan speed and duty. Pressing it runs the fan at full speed (FULL shows on the key); pressing again returns it to its curve. Fans left to their firmware, such as pumps and graphics card fans unless enabled in Settings, are shown but cannot be commanded.</p>
+			</details>
+		</sdpi-item>
+	</body>
+</html>

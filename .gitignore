@@ -29,3 +29,9 @@ sidecar/bin
 sidecar/obj
 src-tauri/target
 src-tauri/gen
+
+# Stream Deck plugin build output
+streamdeck/node_modules
+streamdeck/dist
+streamdeck/com.nplaudio.lightsfanaction.sdPlugin/bin/plugin.js
+streamdeck/com.nplaudio.lightsfanaction.sdPlugin/bin/package.json

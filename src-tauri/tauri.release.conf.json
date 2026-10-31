@@ -11,7 +11,8 @@
       "../sidecar-publish/": "sidecar/",
       "installer/register-tasks.ps1": "register-tasks.ps1",
       "installer/remove-tasks.ps1": "remove-tasks.ps1",
-      "installer/lock-lhm.ps1": "lock-lhm.ps1"
+      "installer/lock-lhm.ps1": "lock-lhm.ps1",
+      "../streamdeck/dist/com.nplaudio.lightsfanaction.streamDeckPlugin": "streamdeck/com.nplaudio.lightsfanaction.streamDeckPlugin"
     },
     "windows": {
       "webviewInstallMode": { "type": "skip" },

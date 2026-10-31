@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Lighting effect</title>
+		<script src="sdpi-components.js"></script>
+	</head>
+	<body>
+		<sdpi-item label="Devices">
+			<sdpi-select setting="device" datasource="getDevices" loading="Loading devices..." default="all" hot-reload></sdpi-select>
+		</sdpi-item>
+		<sdpi-item label="Effect">
+			<sdpi-select setting="effectId" datasource="getEffects" loading="Loading effects..." placeholder="Choose an effect" hot-reload></sdpi-select>
+		</sdpi-item>
+		<sdpi-item>
+			<details>
+				<summary>About this key</summary>
+				<p>Switches the chosen devices to the effect with its default settings. The key shows a white ring while every chosen device is using it.</p>
+			</details>
+		</sdpi-item>
+	</body>
+</html>

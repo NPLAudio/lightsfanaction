@@ -6,6 +6,8 @@ Open-source RGB lighting and fan control for Windows, in the spirit of SignalRGB
 
 - **Lighting.** Per-device effects with live previews, brightness and effect options. Lighting goes to real devices through a running **OpenRGB** server (turn on *SDK Server* in OpenRGB, port 6742). Keychron Q6 per-key lighting works with the patched firmware in `firmware/keychron-q6/`.
 - **Fans.** Fans are controlled by default (administrator permission needed). Pumps and graphics card fans are hidden and left to their firmware unless switched on in Settings. Each fan has a temperature curve plus tunable smoothing, hysteresis, speed limits, a quiet cap and an emergency temperature. Stalled fans are kicked and flagged; fans that ignore commands are flagged. **Calibration** measures a fan's top speed, stall point and restart point (one fan or a batch, never pumps).
+- **Sound reactive.** Bass Pulse, Spectrum Analyzer, Shockwave, Level Meter, Energy Flow and Treble Sparkle follow whatever the PC is playing. The app listens to the default output device (loopback capture, no microphone) and turns it into 32 frequency bands, bass/mid/treble levels and beats; only those numbers are used, and listening runs only while a device is using one of these effects. Sensitivity is adjustable per effect. The Kraken ring only takes about one update a second, so it shows a built-in pulse instead.
+- **Stream Deck.** A plugin adds keys and dials for temperatures, fan speeds (press for full speed), cooler status, lighting effects and brightness. Settings, General, Stream Deck shows the plugin file; double-click it to install. It talks to the app over a local, token-protected API (`src-tauri/src/control.rs`) that only accepts a short list of commands (effect, brightness, fan full speed); it cannot set a fan to an arbitrary speed.
 - **Cooler screen.** NZXT Kraken Elite (2024) display: live temperatures or a picture.
 - **Tray.** Closing the window keeps the app running; the tray icon opens it, opens Settings, or quits (fans return to firmware control on quit).
 - **Settings.** Start with Windows, close to tray, fan control on/off, include pumps, include graphics card fans. Developer options (a simulator for working without hardware) are hidden until you tap the version number in About seven times.
@@ -15,6 +17,7 @@ Open-source RGB lighting and fan control for Windows, in the spirit of SignalRGB
 - `src/` React UI built with shadcn/ui (Base UI + Tailwind). Pages in `src/pages/`, engine in `src/engine.ts`, fan controller in `src/lib/curve.ts` (unit-tested), calibration in `src/calibrate.ts`, settings in `src/settings.ts`.
 - `src/lib/hybrid.ts` routes calls to OpenRGB, the fan hardware service, the Keychron keyboard and the simulator behind the `Backend` interface in `src/lib/types.ts`.
 - `src-tauri/` Tauri shell: tray, close-to-tray, single instance, autostart, the OpenRGB client (`openrgb.rs`), Kraken screen (`kraken.rs`), Keychron/VIA keyboards (`via.rs`), and the launcher for the hardware service (`hw.rs`).
+- `streamdeck/` Stream Deck plugin (TypeScript, Elgato SDK). `npm run streamdeck:pack` builds `streamdeck/dist/*.streamDeckPlugin`; the installer ships it.
 - `sidecar/` C# hardware service for sensors and fan controls (.NET Framework 4.7.2). It uses the separately installed LibreHardwareMonitor and is started with a Windows administrator prompt.
 - `firmware/keychron-q6/` patched Keychron Q6 firmware and flashing instructions.
 
@@ -63,7 +66,7 @@ Environment switches for development: `LFA_NO_ELEVATE=1` runs the hardware servi
 ## Notes
 
 - The webview is started with background throttling disabled, so effects and fan control keep running while the window is hidden in the tray.
-- Starting with Windows launches the app minimized to the tray. With fan control on, Windows asks for administrator permission at each sign-in until the service is installed as a scheduled task (planned).
+- Starting with Windows launches the app minimized to the tray. With the installer, fan control starts through a scheduled task, so there is no prompt at sign-in.
 - The Keychron firmware is a patched build of Keychron's GPLv2 source; `lfa-per-key.patch` is the complete change.
 
 ## License
@@ -74,5 +77,5 @@ because it derives from Keychron's QMK firmware. Third-party components and thei
 
 ## Roadmap
 
-1. Bundle the hardware service with releases and start it without a prompt on every launch.
-2. Profiles, scheduling, audio-reactive and screen-ambient effects, JS effect plugins.
+1. Code signing for the installer.
+2. Profiles, scheduling, screen-ambient effects, JS effect plugins.

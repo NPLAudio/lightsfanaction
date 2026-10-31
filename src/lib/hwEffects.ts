@@ -71,6 +71,10 @@ export function hwEffectFor(effectId: string, p: Record<string, ParamValue>): Hw
       return { modes: ['Rainbow Flow', 'Super Rainbow'], speed }
     case 'sparkle':
       return { modes: ['Starry Night'], colors: [hex(p.color)], speed: Math.min(1, Number(p.rate ?? 6) / 20) }
+    // sound-reactive effects need frames far faster than this device takes; its closest built-in look stands in
+    case 'pulse':
+    case 'shockwave':
+      return { modes: ['Pulsing', 'Breathing'], colors: [hex(p.a ?? '#ff2d95')], speed: 0.6 }
     default:
       return { modes: ['Rainbow Wave'], speed }
   }

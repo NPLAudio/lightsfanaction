@@ -1,3 +1,4 @@
+import { audio, bandAt, beatEnv } from './audio'
 import type { Effect, Led, ParamValue, RGB } from './types'
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
@@ -45,14 +46,15 @@ function noise(x: number, y: number) {
 const num = (p: Record<string, ParamValue>, k: string) => Number(p[k])
 const angle = (l: Led) => frac(Math.atan2(l.y - 0.5, l.x - 0.5) / (Math.PI * 2) + 0.5)
 
+const sensitivity = { key: 'sensitivity', label: 'Sensitivity', type: 'range', min: 30, max: 200, step: 5, default: 100 } as const
 const speed = { key: 'speed', label: 'Speed', type: 'range', min: 0, max: 100, step: 1, default: 40 } as const
 
 export const EFFECTS: Effect[] = [
   {
     id: 'solid',
     name: 'Static',
-    description: 'One steady colour.',
-    params: [{ key: 'color', label: 'Colour', type: 'color', default: '#7c5cff' }],
+    description: 'One steady color.',
+    params: [{ key: 'color', label: 'Color', type: 'color', default: '#7c5cff' }],
     render: (_l, _t, p) => hex(p.color),
   },
   {
@@ -68,13 +70,13 @@ export const EFFECTS: Effect[] = [
   {
     id: 'spin',
     name: 'Spectrum Spin',
-    description: 'Rainbow that rotates around the centre. Best on fans.',
+    description: 'Rainbow that rotates around the center. Best on fans.',
     params: [speed],
     render: (l, t, p) => hsv(angle(l) - t * num(p, 'speed') * 0.01, 1, 1),
   },
   {
     id: 'cycle',
-    name: 'Colour Cycle',
+    name: 'Color Cycle',
     description: 'Whole device slowly shifts hue.',
     params: [speed],
     render: (_l, t, p) => hsv(t * num(p, 'speed') * 0.005, 1, 1),
@@ -83,7 +85,7 @@ export const EFFECTS: Effect[] = [
     id: 'breathing',
     name: 'Breathing',
     description: 'Gentle fade in and out.',
-    params: [{ key: 'color', label: 'Colour', type: 'color', default: '#00e0c6' }, speed],
+    params: [{ key: 'color', label: 'Color', type: 'color', default: '#00e0c6' }, speed],
     render: (_l, t, p) => {
       const k = (Math.sin(t * (0.5 + num(p, 'speed') * 0.04) - Math.PI / 2) + 1) / 2
       return scale(hex(p.color), k * k)
@@ -92,10 +94,10 @@ export const EFFECTS: Effect[] = [
   {
     id: 'gradient',
     name: 'Gradient Flow',
-    description: 'Two colours blending and drifting.',
+    description: 'Two colors blending and drifting.',
     params: [
-      { key: 'a', label: 'Colour A', type: 'color', default: '#ff2d95' },
-      { key: 'b', label: 'Colour B', type: 'color', default: '#2d6bff' },
+      { key: 'a', label: 'Color A', type: 'color', default: '#ff2d95' },
+      { key: 'b', label: 'Color B', type: 'color', default: '#2d6bff' },
       speed,
     ],
     render: (l, t, p) =>
@@ -106,7 +108,7 @@ export const EFFECTS: Effect[] = [
     name: 'Comet',
     description: 'A bright head with a fading tail sweeping back and forth.',
     params: [
-      { key: 'color', label: 'Colour', type: 'color', default: '#ffffff' },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
       { key: 'bg', label: 'Background', type: 'color', default: '#10002b' },
       speed,
     ],
@@ -153,6 +155,125 @@ export const EFFECTS: Effect[] = [
       const life = frac(t * rate)
       const lit = hash(l.i, slot) > 0.85 ? 1 - life : 0
       return mix(hex(p.bg), hex(p.color), lit)
+    },
+  },
+
+  // ---- sound reactive: they follow whatever the PC is playing -------------------------------------
+  {
+    id: 'pulse',
+    name: 'Bass Pulse',
+    description: 'Glows with the bass and flashes on every beat.',
+    reactive: true,
+    params: [
+      { key: 'a', label: 'Color A', type: 'color', default: '#ff2d95' },
+      { key: 'b', label: 'Color B', type: 'color', default: '#2d6bff' },
+      sensitivity,
+    ],
+    render: (l, t, p) => {
+      const g = num(p, 'sensitivity') / 100
+      const k = clamp01(0.08 + audio.bass * g * 0.55 + beatEnv(t, 5) * 0.55 * g)
+      // the mix drifts toward B in the mids, so the whole device shifts color with the melody
+      const c = mix(hex(p.a), hex(p.b), clamp01(l.x * 0.5 + audio.mid * g * 0.8))
+      return scale(c, k)
+    },
+  },
+  {
+    id: 'spectrum',
+    name: 'Spectrum Analyzer',
+    description: 'Each part lights with a frequency: bass in the middle, treble toward the edges.',
+    reactive: true,
+    params: [
+      { key: 'hue', label: 'Starting hue', type: 'range', min: 0, max: 360, step: 5, default: 280 },
+      { key: 'span', label: 'Hue range', type: 'range', min: 0, max: 360, step: 5, default: 200 },
+      sensitivity,
+    ],
+    render: (l, _t, p) => {
+      const g = num(p, 'sensitivity') / 100
+      const u = Math.min(1, Math.abs(l.x - 0.5) * 2)
+      const v = clamp01(bandAt(u) * g * 1.4)
+      return hsv(num(p, 'hue') / 360 - u * (num(p, 'span') / 360), 1 - v * v * 0.25, 0.05 + 0.95 * v ** 1.1)
+    },
+  },
+  {
+    id: 'shockwave',
+    name: 'Shockwave',
+    description: 'Every beat sends a ring of light outward from the center.',
+    reactive: true,
+    params: [
+      { key: 'hue', label: 'Starting hue', type: 'range', min: 0, max: 360, step: 5, default: 190 },
+      { key: 'speed', label: 'Ring speed', type: 'range', min: 20, max: 200, step: 5, default: 90 },
+      sensitivity,
+    ],
+    render: (l, t, p) => {
+      const g = num(p, 'sensitivity') / 100
+      // distance from the center, part straight across so rings (all equally far out) still get a sweep
+      const d = Math.hypot(l.x - 0.5, l.y - 0.5) + Math.abs(l.x - 0.5)
+      const reach = num(p, 'speed') / 100
+      let k = 0
+      let hue = 0
+      audio.beats.forEach((b, i) => {
+        const age = Math.max(0, t - b.t)
+        const ring = Math.exp(-(((d - age * reach * 1.1) / 0.2) ** 2)) * b.s * Math.exp(-age * 0.8)
+        if (ring > k) {
+          k = ring
+          hue = i * 0.11
+        }
+      })
+      const glow = audio.level * g * 0.18
+      return hsv(num(p, 'hue') / 360 + hue + audio.drift * 0.05, 0.85 - k * 0.3, clamp01(glow + k * g * 1.3))
+    },
+  },
+  {
+    id: 'vu',
+    name: 'Level Meter',
+    description: 'A classic volume meter that fills along the device, with a peak marker.',
+    reactive: true,
+    params: [{ key: 'bg', label: 'Unlit', type: 'color', default: '#0a0a14' }, sensitivity],
+    render: (l, _t, p) => {
+      const g = num(p, 'sensitivity') / 100
+      const fill = clamp01(audio.level * g * 1.5)
+      const pos = l.x
+      const peak = clamp01(audio.peak * g * 1.5)
+      if (Math.abs(pos - peak) < 0.045 && peak > 0.05) return [255, 255, 255]
+      if (pos > fill) return hex(p.bg)
+      // green through yellow to red along the meter
+      return pos < 0.6 ? mix([0, 220, 60], [255, 220, 0], pos / 0.6) : mix([255, 220, 0], [255, 30, 0], (pos - 0.6) / 0.4)
+    },
+  },
+  {
+    id: 'energy',
+    name: 'Energy Flow',
+    description: 'A flowing rainbow that speeds up and brightens with the music and flashes on beats.',
+    reactive: true,
+    params: [
+      { key: 'hue', label: 'Starting hue', type: 'range', min: 0, max: 360, step: 5, default: 300 },
+      { key: 'span', label: 'Hue range', type: 'range', min: 20, max: 360, step: 5, default: 160 },
+      sensitivity,
+    ],
+    render: (l, t, p) => {
+      const g = num(p, 'sensitivity') / 100
+      const flash = beatEnv(t, 7) * g
+      const h = num(p, 'hue') / 360 + (l.x + l.y * 0.3) * (num(p, 'span') / 360) - audio.drift
+      return hsv(h, 1 - flash * 0.35, clamp01(0.2 + audio.level * g * 1.1 + flash * 0.5))
+    },
+  },
+  {
+    id: 'sparkle-hi',
+    name: 'Treble Sparkle',
+    description: 'Glows with the bass, and sparkles with cymbals, hi-hats and vocals.',
+    reactive: true,
+    params: [
+      { key: 'color', label: 'Sparkle', type: 'color', default: '#9be8ff' },
+      { key: 'bg', label: 'Glow', type: 'color', default: '#3b0a8f' },
+      sensitivity,
+    ],
+    render: (l, t, p) => {
+      const g = num(p, 'sensitivity') / 100
+      const slot = Math.floor(t * 20)
+      const chance = clamp01(audio.treble * g * 0.7 + beatEnv(t, 8) * 0.25)
+      const lit = hash(l.i, slot) > 1 - chance ? 1 - frac(t * 20) * 0.8 : 0
+      const glow = scale(hex(p.bg), 0.1 + clamp01(audio.bass * g) * 0.9)
+      return mix(glow, hex(p.color), lit)
     },
   },
 ]

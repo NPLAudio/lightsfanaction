@@ -84,6 +84,26 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
               checked={s.closeToTray}
               onChange={(v) => s.set({ closeToTray: v })}
             />
+            <Separator />
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Stream Deck</p>
+              <p className="text-sm text-muted-foreground">
+                Keys and dials for temperatures, fan speeds, cooler status, lighting effects and brightness. Show the
+                plugin file, then double-click it to install it into the Stream Deck app.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!IS_TAURI}
+                onClick={() =>
+                  void invoke('show_streamdeck_plugin').catch((e) =>
+                    toast.error('Could not find the Stream Deck plugin', { description: String(e) }),
+                  )
+                }
+              >
+                Show plugin file
+              </Button>
+            </div>
           </TabsContent>
 
           <TabsContent value="fans" className="space-y-5 pt-4">

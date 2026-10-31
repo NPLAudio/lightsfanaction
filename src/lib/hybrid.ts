@@ -140,7 +140,7 @@ export class HybridBackend implements Backend {
   private viaPending = new Map<string, [number, number, number]>()
   private viaSent = new Map<string, string>()
 
-  /** QMK/VIA keyboards (e.g. Keychron Q-series on stock firmware): one colour for the whole board. */
+  /** QMK/VIA keyboards (e.g. Keychron Q-series on stock firmware): one color for the whole board. */
   private async listVia(): Promise<Device[]> {
     this.viaPaths.clear()
     this.viaPerKey.clear()
@@ -169,7 +169,7 @@ export class HybridBackend implements Backend {
           layout: 'grid',
           cols: 18,
           ledCount: 108,
-          note: 'Stock firmware can only show one colour at a time, so the keyboard shows the average of this preview.',
+          note: 'Stock firmware can only show one color at a time, so the keyboard shows the average of this preview.',
         }
       })
     } catch {
@@ -359,7 +359,7 @@ export class HybridBackend implements Backend {
 
   /**
    * The Kraken applies lighting updates slowly: tested on a 2024 Elite, its ring follows one update a second
-   * but ignores faster ones (four a second left it on a stale colour), and the flood also starves the
+   * but ignores faster ones (four a second left it on a stale color), and the flood also starves the
    * fan control that shares its USB link. Everything else takes frames at full speed.
    */
   private rgbInterval(idx: number) {
@@ -379,7 +379,7 @@ export class HybridBackend implements Backend {
       const prev = this.sent.get(i)
       const changed = !prev || prev.length !== rgb.length || prev.some((v, k) => v !== rgb[k])
       // many controllers fall back to their own effect if they hear nothing for a few seconds, so a
-      // steady colour is repeated now and then
+      // steady color is repeated now and then
       const stale = now - (this.lastRgbAt.get(i) ?? 0) > KEEPALIVE_MS
       if (changed || stale) frames.push([i, rgb])
     }

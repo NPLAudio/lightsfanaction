@@ -1,0 +1,143 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "Lights Fan Action",
+  "Version": "0.1.0.0",
+  "Author": "NPLAudio",
+  "Description": "Show temperatures, fan speeds and cooler status, and control lighting from your Stream Deck. Needs Lights Fan Action running on the same PC.",
+  "Category": "Lights Fan Action",
+  "CategoryIcon": "imgs/plugin/category",
+  "Icon": "imgs/plugin/icon",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.6"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24"
+  },
+  "UUID": "com.nplaudio.lightsfanaction",
+  "Actions": [
+    {
+      "Name": "Temperature",
+      "UUID": "com.nplaudio.lightsfanaction.sensor",
+      "Icon": "imgs/actions/sensor",
+      "Tooltip": "Shows a temperature. Leave the sensor on automatic to follow whichever is hottest.",
+      "PropertyInspectorPath": "ui/sensor.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/sensor",
+          "ShowTitle": false
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "Icon": "imgs/actions/sensor",
+        "TriggerDescription": {
+          "Rotate": "",
+          "Push": "",
+          "Touch": ""
+        }
+      }
+    },
+    {
+      "Name": "Fan",
+      "UUID": "com.nplaudio.lightsfanaction.fan",
+      "Icon": "imgs/actions/fan",
+      "Tooltip": "Shows a fan's speed. Press to run it at full speed, press again to go back to its curve.",
+      "PropertyInspectorPath": "ui/fan.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/fan",
+          "ShowTitle": false
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "Icon": "imgs/actions/fan",
+        "TriggerDescription": {
+          "Push": "Full speed on or off"
+        }
+      }
+    },
+    {
+      "Name": "Cooler status",
+      "UUID": "com.nplaudio.lightsfanaction.cooler",
+      "Icon": "imgs/actions/cooler",
+      "Tooltip": "Shows the liquid cooler's coolant temperature and pump speed.",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/cooler",
+          "ShowTitle": false
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "Icon": "imgs/actions/cooler",
+        "TriggerDescription": {
+          "Rotate": "",
+          "Push": "",
+          "Touch": ""
+        }
+      }
+    },
+    {
+      "Name": "Lighting effect",
+      "UUID": "com.nplaudio.lightsfanaction.effect",
+      "Icon": "imgs/actions/effect",
+      "Tooltip": "Switches lighting to an effect on all devices or one device. Lights up while it is active.",
+      "PropertyInspectorPath": "ui/effect.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/effect",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "Brightness",
+      "UUID": "com.nplaudio.lightsfanaction.brightness",
+      "Icon": "imgs/actions/brightness",
+      "Tooltip": "Sets, raises or lowers lighting brightness. On a dial, turn to adjust and press to switch off or back on.",
+      "PropertyInspectorPath": "ui/brightness.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/brightness",
+          "ShowTitle": false
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "Icon": "imgs/actions/brightness",
+        "TriggerDescription": {
+          "Rotate": "Brightness",
+          "Push": "Lights off or on"
+        }
+      }
+    }
+  ]
+}

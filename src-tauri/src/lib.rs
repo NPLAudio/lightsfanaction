@@ -1,3 +1,5 @@
+mod audio;
+mod control;
 mod elevate;
 mod hw;
 pub mod kraken;
@@ -186,6 +188,29 @@ async fn via_restore(state: State<'_, Keyboards>, path: String) -> Result<(), St
     Ok(())
 }
 
+/// The window hands over its current state for the local control API (see `control`).
+#[tauri::command]
+fn control_publish(state: State<'_, control::Snapshot>, json: String) {
+    if let Ok(mut s) = state.0.lock() {
+        *s = json;
+    }
+}
+
+/// Shows the Stream Deck plugin installer in Explorer; double-clicking it installs the plugin.
+#[tauri::command]
+fn show_streamdeck_plugin() -> Result<(), String> {
+    let dir = std::env::current_exe().map_err(|e| e.to_string())?.parent().ok_or("no folder")?.join("streamdeck");
+    let file = dir.join("com.nplaudio.lightsfanaction.streamDeckPlugin");
+    if !file.exists() {
+        return Err("the Stream Deck plugin is not part of this build".into());
+    }
+    std::process::Command::new("explorer")
+        .arg(format!("/select,{}", file.display()))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Default)]
 struct Hw(Mutex<Option<hw::Client>>);
 
@@ -266,6 +291,8 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            control::start(app.handle().clone(), app.state::<control::Snapshot>().inner().clone());
+            audio::start(app.handle().clone(), app.state::<std::sync::Arc<audio::Wanted>>().inner().clone());
             // launched at login with --minimized: stay in the tray until opened
             if !std::env::args().any(|a| a == "--minimized") {
                 show_main(app.handle());
@@ -298,6 +325,8 @@ pub fn run() {
         .manage(Rgb::default())
         .manage(Hw::default())
         .manage(Keyboards::default())
+        .manage(control::Snapshot::default())
+        .manage(std::sync::Arc::new(audio::Wanted::default()))
         .invoke_handler(tauri::generate_handler![
             openrgb_connect,
             openrgb_update,
@@ -316,6 +345,9 @@ pub fn run() {
             hw_apply,
             hw_stop,
             set_close_to_tray,
+            control_publish,
+            audio::audio_set_active,
+            show_streamdeck_plugin,
             trace_enabled,
             trace_ping
         ])
@@ -323,6 +355,7 @@ pub fn run() {
         .expect("error while building Lights Fan Action")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                control::stop();
                 if let Ok(mut m) = app.state::<Keyboards>().0.lock() {
                     for (_, k) in m.iter_mut() {
                         k.restore();

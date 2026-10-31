@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Temperature</title>
+		<script src="sdpi-components.js"></script>
+	</head>
+	<body>
+		<sdpi-item label="Sensor">
+			<sdpi-select setting="sensorId" datasource="getSensors" loading="Loading sensors..." placeholder="Hottest (automatic)" hot-reload></sdpi-select>
+		</sdpi-item>
+		<sdpi-item label="Warm at">
+			<sdpi-range setting="warmAt" min="30" max="100" default="70" showlabels></sdpi-range>
+		</sdpi-item>
+		<sdpi-item label="Hot at">
+			<sdpi-range setting="hotAt" min="30" max="110" default="85" showlabels></sdpi-range>
+		</sdpi-item>
+		<sdpi-item>
+			<details>
+				<summary>About this key</summary>
+				<p>The key turns amber at the warm limit and red at the hot limit. With the sensor on automatic it follows whichever sensor is hottest. Needs Lights Fan Action running.</p>
+			</details>
+		</sdpi-item>
+	</body>
+</html>

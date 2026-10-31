@@ -53,3 +53,7 @@ Development tools (Vite, Vitest, TypeScript, oxlint, the Tauri CLI) are not ship
   Rust from that description; no liquidctl code is included.
 - **PawnIO** (needed by OpenRGB for RAM lighting) is installed separately by the user and is not redistributed here.
 - **WebView2** is Microsoft's runtime, part of Windows 11, and is not redistributed here.
+
+## Stream Deck plugin
+
+The Stream Deck plugin (`streamdeck/`) is built with the Elgato Stream Deck SDK (`@elgato/streamdeck`, MIT) and includes the Stream Deck property inspector components (`sdpi-components`, MIT, Copyright Corsair Memory Inc. and other contributors). Neither is a dependency of the main app.

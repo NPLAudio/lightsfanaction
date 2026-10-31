@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { StatusPopover } from '@/components/StatusPopover'
+import { startControl } from '@/control'
 import { startEngine } from '@/engine'
 import { startLcdLoop } from '@/lcdLive'
 import { backend } from '@/lib/backend'
@@ -37,6 +38,7 @@ export default function App() {
       await useStore.getState().init()
       startEngine()
       startLcdLoop()
+      startControl()
       await syncHardware()
     })()
 

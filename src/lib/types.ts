@@ -30,7 +30,7 @@ export interface Device {
 export interface Led {
   i: number
   n: number
-  /** normalised position, 0..1 */
+  /** normalized position, 0..1 */
   x: number
   y: number
 }
@@ -48,6 +48,8 @@ export interface ParamDef {
 }
 
 export interface Effect {
+  /** follows the music; needs the audio listener running */
+  reactive?: boolean
   id: string
   name: string
   description: string

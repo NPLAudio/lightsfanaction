@@ -1,10 +1,12 @@
 import { backend } from './lib/backend'
 import { IS_TAURI, invoke } from './lib/hybrid'
 import { CRITICAL_TEMP, defaultCritical, initialRuntime, mixTemps, stepFan, type FanRuntime } from './lib/curve'
+import { simulateAudio, tickAudio } from './lib/audio'
+import { setAudioActive } from './lib/audioLink'
 import { effectById } from './lib/effects'
 import { ledsFor } from './lib/layout'
 import type { FanLive, RGB } from './lib/types'
-import { kindEnabled, useSettings } from './settings'
+import { kindEnabled, simulatorActive, useSettings } from './settings'
 import { useStore } from './store'
 
 /** Latest rendered frame per device; previews read this instead of re-rendering. */
@@ -14,11 +16,18 @@ const FRAME_MS = 33
 const FAN_MS = 1000
 
 let trace = false
+let lastFrameAt = performance.now() / 1000
 
 function renderFrames() {
   if (trace) void invoke('trace_ping')
   const { devices, assignments } = useStore.getState()
   const t = performance.now() / 1000
+  // listen to the PC's audio only while some device is using a sound-reactive effect
+  const reactive = devices.some((d) => effectById(assignments[d.id]?.effectId ?? '').reactive)
+  if (reactive && simulatorActive(IS_TAURI)) simulateAudio(t)
+  setAudioActive(reactive && !simulatorActive(IS_TAURI))
+  tickAudio(t, Math.min(0.2, t - lastFrameAt))
+  lastFrameAt = t
   for (const d of devices) {
     const a = assignments[d.id]
     if (!a) continue
@@ -172,7 +181,7 @@ async function fanTick() {
 
       live[f.id] = { id: f.id, pct, rpm, reported, warning, note }
     }
-    setLive(hw.sensors, live)
+    setLive(hw.sensors, live, hw.fans)
   } finally {
     busy = false
   }

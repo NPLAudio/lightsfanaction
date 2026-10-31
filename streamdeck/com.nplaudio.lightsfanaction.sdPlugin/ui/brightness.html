@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Brightness</title>
+		<script src="sdpi-components.js"></script>
+	</head>
+	<body>
+		<sdpi-item label="Devices">
+			<sdpi-select setting="device" datasource="getDevices" loading="Loading devices..." default="all" hot-reload></sdpi-select>
+		</sdpi-item>
+		<sdpi-item label="Key does">
+			<sdpi-select setting="op" default="set">
+				<option value="set">Set to a level</option>
+				<option value="up">Brighter</option>
+				<option value="down">Dimmer</option>
+			</sdpi-select>
+		</sdpi-item>
+		<sdpi-item label="Level">
+			<sdpi-range setting="value" min="0" max="100" default="100" showlabels></sdpi-range>
+		</sdpi-item>
+		<sdpi-item label="Step">
+			<sdpi-range setting="step" min="1" max="50" default="10" showlabels></sdpi-range>
+		</sdpi-item>
+		<sdpi-item>
+			<details>
+				<summary>About this key</summary>
+				<p>Level applies to "Set to a level"; Step applies to Brighter, Dimmer and the dial. On a dial, turn to adjust and press to switch the lights off, then back to where they were.</p>
+			</details>
+		</sdpi-item>
+	</body>
+</html>

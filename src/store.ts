@@ -11,6 +11,7 @@ import type {
   FanConfig,
   FanInfo,
   FanLive,
+  HardwareState,
   ParamValue,
   Sensor,
 } from './lib/types'
@@ -26,6 +27,8 @@ interface State {
   selectedFan: string
   sensors: Sensor[]
   live: Record<string, FanLive>
+  /** Every fan reading, including fans left to their firmware (which have no `live` entry). */
+  rawFans: HardwareState['fans']
   calibrations: Record<string, FanCalibration>
   lcdLive: boolean
   lcdError: string | null
@@ -34,12 +37,15 @@ interface State {
   selectDevice(id: string): void
   setSyncAll(v: boolean): void
   setEffect(deviceId: string, effectId: string): void
+  /** Like setEffect/setBrightness, but for an explicit set of devices (remote control), ignoring "sync all". */
+  setEffectFor(deviceIds: string[], effectId: string): void
+  setBrightnessFor(deviceIds: string[], v: number): void
   setParam(deviceId: string, key: string, value: ParamValue): void
   setBrightness(deviceId: string, v: number): void
   selectFan(id: string): void
   patchFan(id: string, patch: Partial<FanConfig>): void
   setCurve(id: string, curve: CurvePoint[]): void
-  setLive(sensors: Sensor[], live: Record<string, FanLive>): void
+  setLive(sensors: Sensor[], live: Record<string, FanLive>, rawFans?: HardwareState['fans']): void
   setCalibration(id: string, cal: FanCalibration | null): void
   setLcdLive(on: boolean): void
   setLcdError(e: string | null): void
@@ -89,6 +95,7 @@ export const useStore = create<State>()(
       selectedFan: '',
       sensors: [],
       live: {},
+      rawFans: [],
       calibrations: {},
       lcdLive: false,
       lcdError: null,
@@ -128,6 +135,18 @@ export const useStore = create<State>()(
         set({ assignments: a })
       },
 
+      setEffectFor(deviceIds, effectId) {
+        const a = { ...get().assignments }
+        for (const id of deviceIds) a[id] = { ...newAssignment(effectId), brightness: a[id]?.brightness ?? 100 }
+        set({ assignments: a })
+      },
+
+      setBrightnessFor(deviceIds, v) {
+        const a = { ...get().assignments }
+        for (const id of deviceIds) if (a[id]) a[id] = { ...a[id], brightness: v }
+        set({ assignments: a })
+      },
+
       setParam(deviceId, key, value) {
         const { devices, syncAll, assignments } = get()
         const a = { ...assignments }
@@ -148,7 +167,7 @@ export const useStore = create<State>()(
       selectFan: (id) => set({ selectedFan: id }),
       patchFan: (id, patch) => set({ fans: get().fans.map((f) => (f.id === id ? { ...f, ...patch } : f)) }),
       setCurve: (id, curve) => get().patchFan(id, { curve }),
-      setLive: (sensors, live) => set({ sensors, live }),
+      setLive: (sensors, live, rawFans = []) => set({ sensors, live, rawFans }),
       setCalibration(id, cal) {
         const next = { ...get().calibrations }
         if (cal) next[id] = cal
