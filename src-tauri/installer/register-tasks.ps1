@@ -19,10 +19,27 @@ $tasks = @(
     @{ Name = 'Lights Fan Action (tray)'; Arguments = '--minimized'; Description = 'Starts Lights Fan Action in the tray with the rights it needs for fan control.' }
 )
 
+# The installer runs as SYSTEM, so by default only SYSTEM and the Administrators group may start these tasks.
+# A person signed in as an administrator runs with a filtered token on which Administrators is deny-only, so
+# starting a task would be refused and the app would fall back to a permission prompt. Allow the signed-in
+# user to read and start them (nothing more): the task still runs with their own administrator rights, so a
+# standard account that starts it gets nothing.
+function Grant-Start($name) {
+    $user = (Get-CimInstance Win32_ComputerSystem).UserName
+    if (-not $user) { return }
+    $sid = ([System.Security.Principal.NTAccount]$user).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    $folder = (New-Object -ComObject Schedule.Service)
+    $folder.Connect()
+    $task = $folder.GetFolder('\').GetTask($name)
+    $sddl = $task.GetSecurityDescriptor(4)  # DACL
+    $task.SetSecurityDescriptor($sddl + "(A;;GRGX;;;$sid)", 0)
+}
+
 foreach ($t in $tasks) {
     $params = @{ Execute = $exe; WorkingDirectory = $PSScriptRoot }
     if ($t.Arguments) { $params.Argument = $t.Arguments }
     $action = New-ScheduledTaskAction @params
     Register-ScheduledTask -TaskName $t.Name -Action $action -Principal $principal -Settings $settings `
         -Description $t.Description -Force | Out-Null
+    try { Grant-Start $t.Name } catch { Write-Warning "Could not allow the signed-in user to start '$($t.Name)': $_" }
 }
