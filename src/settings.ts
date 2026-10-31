@@ -15,6 +15,8 @@ export interface Settings {
   devUnlocked: boolean
   /** Developer option: fake devices, fans and temperatures. Off unless asked for. */
   useSimulator: boolean
+  /** Output device the sound-reactive effects listen to. Empty means the Windows default. */
+  audioDevice: string
   /** Folder LibreHardwareMonitor is installed in. Empty means look in the usual places. */
   lhmDir: string
 }
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   closeToTray: true,
   devUnlocked: false,
   useSimulator: false,
+  audioDevice: '',
   lhmDir: '',
 }
 

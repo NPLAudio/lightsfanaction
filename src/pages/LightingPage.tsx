@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { DeviceCanvas } from '@/components/LedCanvas'
 import { Disclosure } from '@/components/Disclosure'
+import { AudioStatusLine } from '@/components/AudioStatusLine'
 import { SliderField } from '@/components/Field'
 import { backend } from '@/lib/backend'
 import { EFFECTS, effectById } from '@/lib/effects'
@@ -192,6 +193,7 @@ export function LightingPage() {
                   </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground">{fx.description}</p>
+                {fx.reactive && <AudioStatusLine />}
               </div>
               <SliderField label="Brightness" value={a.brightness} min={0} max={100} unit="%" onChange={(v) => setBrightness(dev.id, v)} />
             </CardContent>

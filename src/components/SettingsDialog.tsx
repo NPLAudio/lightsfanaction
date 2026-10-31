@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SwitchField } from '@/components/Field'
@@ -25,10 +26,12 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
   const [login, setLogin] = useState(false)
   const taps = useRef(0)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [outputs, setOutputs] = useState<{ id: string; name: string; is_default: boolean }[]>([])
 
   useEffect(() => {
     if (!open || !IS_TAURI) return
     void autostart().then((a) => a.isEnabled()).then(setLogin).catch(() => setLogin(false))
+    void invoke<typeof outputs>('audio_devices').then(setOutputs).catch(() => setOutputs([]))
   }, [open])
 
   // the Rust side decides what the close button does, so tell it whenever the setting changes
@@ -84,6 +87,35 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
               checked={s.closeToTray}
               onChange={(v) => s.set({ closeToTray: v })}
             />
+            <Separator />
+            <div className="space-y-2">
+              <Label className="text-sm">Sound-reactive lighting listens to</Label>
+              <Select
+                value={s.audioDevice}
+                onValueChange={(v) => s.set({ audioDevice: v ?? '' })}
+                items={[
+                  { value: '', label: 'Windows default output' },
+                  ...outputs.map((o) => ({ value: o.id, label: o.is_default ? `${o.name} (default)` : o.name })),
+                ]}
+                disabled={!IS_TAURI}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Windows default output</SelectItem>
+                  {outputs.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.is_default ? `${o.name} (default)` : o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                The effects follow what this device is playing. Choose the one you actually hear if it is not the
+                Windows default. Only levels are used; nothing is recorded.
+              </p>
+            </div>
             <Separator />
             <div className="space-y-2">
               <p className="text-sm font-medium">Stream Deck</p>

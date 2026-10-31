@@ -50,6 +50,8 @@ export function hwEffectFor(effectId: string, p: Record<string, ParamValue>): Hw
   switch (effectId) {
     case 'solid':
       return { modes: ['Static'], colors: [hex(p.color)] }
+    case 'off':
+      return { modes: ['Off', 'Static'], colors: [[0, 0, 0]] }
     case 'rainbow':
       return { modes: ['Rainbow Wave', 'Super Rainbow'], speed }
     case 'spin':

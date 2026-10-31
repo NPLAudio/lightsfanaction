@@ -71,3 +71,13 @@ describe('sound-reactive effects', () => {
     }
   })
 })
+
+describe('off effect', () => {
+  it('is black on every led and has nothing to adjust', () => {
+    const off = EFFECTS.find((e) => e.id === 'off')!
+    expect(off.params).toEqual([])
+    for (const l of ledsFor({ id: 'x', name: 'x', kind: 'strip', layout: 'strip', ledCount: 10 })) {
+      expect(off.render(l, 5, {})).toEqual([0, 0, 0])
+    }
+  })
+})

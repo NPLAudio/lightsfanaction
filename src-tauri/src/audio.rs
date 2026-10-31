@@ -20,6 +20,8 @@ const FFT: usize = 2048;
 const LOW_HZ: f32 = 35.0;
 const HIGH_HZ: f32 = 16_000.0;
 const EMIT_EVERY: Duration = Duration::from_millis(25);
+/// Magnitude below which a band counts as silence (about -62 dBFS), so quiet music still fills the range.
+const FLOOR: f32 = 0.0008;
 
 #[derive(Clone, Default, Serialize, Debug, PartialEq)]
 pub struct Levels {
@@ -128,7 +130,7 @@ impl Analyzer {
         } else {
             self.peak += (loudest - self.peak) * (1.0 - (-dt / 4.0).exp());
         }
-        let peak = self.peak.max(0.004);
+        let peak = self.peak.max(FLOOR);
 
         let mut level = 0.0;
         for b in 0..BANDS {
@@ -138,7 +140,7 @@ impl Analyzer {
             level += self.smooth[b];
         }
         // silence reads as silence however low the gain has fallen
-        let quiet = (loudest / 0.004).clamp(0.0, 1.0);
+        let quiet = (loudest / FLOOR).clamp(0.0, 1.0);
         for s in &mut self.smooth {
             *s *= quiet;
         }
@@ -215,9 +217,32 @@ fn fft(re: &mut [f32], im: &mut [f32]) {
 
 // ---- capture -----------------------------------------------------------------------------------
 
-/// Whether any effect currently wants audio. Set by the window.
+/// What the window asks of the listener.
 #[derive(Default)]
-pub struct Wanted(pub AtomicBool);
+pub struct Control {
+    /// whether any effect currently wants audio
+    wanted: AtomicBool,
+    /// which output device to listen to; empty means whatever Windows currently uses as the default
+    device: Mutex<String>,
+}
+
+/// Reported to the window so it can say what is going on (or what is wrong).
+#[derive(Clone, Serialize, Debug, PartialEq, Default)]
+pub struct Status {
+    /// "off", "listening" or "error"
+    pub state: String,
+    pub device: String,
+    pub message: String,
+    /// whether sound has actually arrived in the last couple of seconds
+    pub playing: bool,
+}
+
+#[derive(Serialize)]
+pub struct DeviceChoice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
 
 #[derive(Default)]
 struct Shared {
@@ -263,14 +288,34 @@ where
 struct Running {
     _stream: cpal::Stream,
     shared: Arc<Mutex<Shared>>,
+    /// the device the stream is on
     device_id: String,
+    device_name: String,
+    /// what was asked for ("" for the default), so a change of choice reopens
+    choice: String,
     analyzer: Analyzer,
+    last_data: Option<Instant>,
 }
 
-fn open() -> Result<Running, String> {
+fn name_of(device: &cpal::Device) -> String {
+    device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Unknown device".into())
+}
+
+fn id_of(device: &cpal::Device) -> String {
+    device.id().map(|i| i.to_string()).unwrap_or_default()
+}
+
+fn find(choice: &str) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("no output device")?;
-    let device_id = device.id().map(|i| i.to_string()).unwrap_or_default();
+    if choice.is_empty() {
+        return host.default_output_device().ok_or_else(|| "Windows has no sound output device".to_string());
+    }
+    let id = choice.parse().map_err(|_| "that sound device is not valid".to_string())?;
+    host.device_by_id(&id).ok_or_else(|| "that sound device is not available".to_string())
+}
+
+fn open(choice: &str) -> Result<Running, String> {
+    let device = find(choice)?;
     // on Windows, an input stream on an output device records what that device is playing
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let rate = supported.sample_rate() as f32;
@@ -284,21 +329,47 @@ fn open() -> Result<Running, String> {
         other => return Err(format!("unsupported sample format {other:?}")),
     };
     stream.play().map_err(|e| e.to_string())?;
-    Ok(Running { _stream: stream, shared, device_id, analyzer: Analyzer::new(rate) })
+    Ok(Running {
+        _stream: stream,
+        shared,
+        device_id: id_of(&device),
+        device_name: name_of(&device),
+        choice: choice.to_string(),
+        analyzer: Analyzer::new(rate),
+        last_data: None,
+    })
 }
 
 fn default_device_id() -> Option<String> {
-    cpal::default_host().default_output_device().and_then(|d| d.id().ok()).map(|i| i.to_string())
+    cpal::default_host().default_output_device().map(|d| id_of(&d))
 }
 
-/// Runs for the life of the app: opens capture while wanted, follows the default device, and emits levels.
-pub fn start(app: AppHandle, wanted: Arc<Wanted>) {
+fn log(line: &str) {
+    use std::io::Write;
+    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).map(|p| p.join("Lights Fan Action")) else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("audio.log");
+    // keep the log small: start over once it gets large
+    if std::fs::metadata(&path).map(|m| m.len() > 64 * 1024).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// Runs for the life of the app: opens capture while wanted, follows the chosen (or default) device, and
+/// emits levels and a status.
+pub fn start(app: AppHandle, control: Arc<Control>) {
     std::thread::spawn(move || {
         let mut running: Option<Running> = None;
         let mut next_try = Instant::now();
         let mut next_device_check = Instant::now();
         let mut last = Instant::now();
         let mut last_emit = Instant::now();
+        let mut last_status = Instant::now();
+        let mut status = Status { state: "off".into(), ..Status::default() };
+        let mut failure = String::new();
         let mut silent = Levels { bands: vec![0.0; BANDS], ..Levels::default() };
 
         loop {
@@ -307,58 +378,115 @@ pub fn start(app: AppHandle, wanted: Arc<Wanted>) {
             let dt = now.duration_since(last).as_secs_f32().min(0.2);
             last = now;
 
-            if !wanted.0.load(Ordering::Relaxed) {
+            let wanted = control.wanted.load(Ordering::Relaxed);
+            let choice = control.device.lock().map(|d| d.clone()).unwrap_or_default();
+
+            if !wanted {
                 if running.take().is_some() {
                     // tell the window the levels are gone so effects settle to dark
                     let _ = app.emit("audio-levels", &silent);
                 }
+                failure.clear();
                 std::thread::sleep(Duration::from_millis(150));
-                continue;
-            }
-
-            if let Some(r) = &running {
-                let failed = r.shared.lock().map(|s| s.failed).unwrap_or(true);
-                let moved = now >= next_device_check && default_device_id().is_some_and(|id| id != r.device_id);
-                if now >= next_device_check {
-                    next_device_check = now + Duration::from_secs(2);
+            } else {
+                if let Some(r) = &running {
+                    let failed = r.shared.lock().map(|s| s.failed).unwrap_or(true);
+                    let moved = r.choice.is_empty() && now >= next_device_check && default_device_id().is_some_and(|id| id != r.device_id);
+                    if now >= next_device_check {
+                        next_device_check = now + Duration::from_secs(2);
+                    }
+                    if failed || moved || r.choice != choice {
+                        running = None;
+                        next_try = now;
+                    }
                 }
-                if failed || moved {
-                    running = None;
+                if running.is_none() && now >= next_try {
+                    next_try = now + Duration::from_secs(2);
+                    match open(&choice) {
+                        Ok(r) => {
+                            failure.clear();
+                            log(&format!("listening to {} ({} Hz)", r.device_name, r.analyzer.rate()));
+                            running = Some(r);
+                        }
+                        Err(e) => {
+                            if failure != e {
+                                log(&format!("cannot listen: {e}"));
+                            }
+                            failure = e;
+                        }
+                    }
                 }
-            }
-            if running.is_none() && now >= next_try {
-                next_try = now + Duration::from_secs(2);
-                running = open().ok();
-            }
 
-            let Some(r) = running.as_mut() else {
-                if now.duration_since(last_emit) >= Duration::from_millis(200) {
+                if let Some(r) = running.as_mut() {
+                    // loopback delivers nothing while the PC is silent, in which case the levels simply fall away
+                    let samples = r.shared.lock().map(|mut s| std::mem::take(&mut s.pending)).unwrap_or_default();
+                    if samples.is_empty() {
+                        r.analyzer.push(&vec![0.0; (r.analyzer.rate() * dt) as usize]);
+                    } else {
+                        r.last_data = Some(now);
+                        r.analyzer.push(&samples);
+                    }
+                    let levels = r.analyzer.step(dt).clone();
+                    silent.beats = levels.beats;
+                    if now.duration_since(last_emit) >= EMIT_EVERY {
+                        last_emit = now;
+                        let _ = app.emit("audio-levels", &levels);
+                    }
+                } else if now.duration_since(last_emit) >= Duration::from_millis(200) {
                     last_emit = now;
                     let _ = app.emit("audio-levels", &silent);
                 }
-                continue;
-            };
-
-            // loopback delivers nothing while the PC is silent, in which case the levels simply fall away
-            let samples = r.shared.lock().map(|mut s| std::mem::take(&mut s.pending)).unwrap_or_default();
-            if samples.is_empty() {
-                r.analyzer.push(&vec![0.0; (r.analyzer.rate() * dt) as usize]);
-            } else {
-                r.analyzer.push(&samples);
             }
-            let levels = r.analyzer.step(dt).clone();
-            silent.beats = levels.beats;
-            if now.duration_since(last_emit) >= EMIT_EVERY {
-                last_emit = now;
-                let _ = app.emit("audio-levels", &levels);
+
+            let next = match (&running, wanted) {
+                (_, false) => Status { state: "off".into(), ..Status::default() },
+                (Some(r), true) => Status {
+                    state: "listening".into(),
+                    device: r.device_name.clone(),
+                    message: String::new(),
+                    playing: r.last_data.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2)),
+                },
+                (None, true) => Status { state: "error".into(), device: choice.clone(), message: failure.clone(), playing: false },
+            };
+            // sent on change, and now and then so a window that started listening late still hears it
+            if next != status || now.duration_since(last_status) >= Duration::from_secs(2) {
+                if next.state != status.state {
+                    log(&format!("status: {} {}", next.state, next.message));
+                }
+                status = next;
+                last_status = now;
+                let _ = app.emit("audio-status", &status);
             }
         }
     });
 }
 
 #[tauri::command]
-pub fn audio_set_active(state: tauri::State<'_, Arc<Wanted>>, on: bool) {
-    state.0.store(on, Ordering::Relaxed);
+pub fn audio_set_active(state: tauri::State<'_, Arc<Control>>, on: bool) {
+    state.wanted.store(on, Ordering::Relaxed);
+}
+
+/// Chooses the output device to listen to; an empty id means the Windows default.
+#[tauri::command]
+pub fn audio_set_device(state: tauri::State<'_, Arc<Control>>, device: String) {
+    if let Ok(mut d) = state.device.lock() {
+        *d = device;
+    }
+}
+
+#[tauri::command]
+pub fn audio_devices() -> Vec<DeviceChoice> {
+    let host = cpal::default_host();
+    let default = default_device_id();
+    host.output_devices()
+        .map(|list| {
+            list.map(|d| {
+                let id = id_of(&d);
+                DeviceChoice { name: name_of(&d), is_default: default.as_deref() == Some(id.as_str()), id }
+            })
+            .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -453,7 +581,7 @@ mod hardware {
     #[test]
     #[ignore]
     fn loopback_opens_and_reports_levels() {
-        let mut r = open().expect("open the default output device in loopback");
+        let mut r = open("").expect("open the default output device in loopback");
         println!("device {} at {} Hz", r.device_id, r.analyzer.rate());
         let mut peak = 0.0f32;
         let mut got = 0usize;

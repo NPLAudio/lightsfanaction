@@ -58,6 +58,13 @@ export const EFFECTS: Effect[] = [
     render: (_l, _t, p) => hex(p.color),
   },
   {
+    id: 'off',
+    name: 'Off',
+    description: 'Lights out. The device stays connected and keeps its place for when you switch back.',
+    params: [],
+    render: () => [0, 0, 0],
+  },
+  {
     id: 'rainbow',
     name: 'Rainbow Wave',
     description: 'A rolling spectrum across the device.',

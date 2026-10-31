@@ -292,7 +292,7 @@ pub fn run() {
                 })
                 .build(app)?;
             control::start(app.handle().clone(), app.state::<control::Snapshot>().inner().clone());
-            audio::start(app.handle().clone(), app.state::<std::sync::Arc<audio::Wanted>>().inner().clone());
+            audio::start(app.handle().clone(), app.state::<std::sync::Arc<audio::Control>>().inner().clone());
             // launched at login with --minimized: stay in the tray until opened
             if !std::env::args().any(|a| a == "--minimized") {
                 show_main(app.handle());
@@ -326,7 +326,7 @@ pub fn run() {
         .manage(Hw::default())
         .manage(Keyboards::default())
         .manage(control::Snapshot::default())
-        .manage(std::sync::Arc::new(audio::Wanted::default()))
+        .manage(std::sync::Arc::new(audio::Control::default()))
         .invoke_handler(tauri::generate_handler![
             openrgb_connect,
             openrgb_update,
@@ -347,6 +347,8 @@ pub fn run() {
             set_close_to_tray,
             control_publish,
             audio::audio_set_active,
+            audio::audio_set_device,
+            audio::audio_devices,
             show_streamdeck_plugin,
             trace_enabled,
             trace_ping

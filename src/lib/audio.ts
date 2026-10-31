@@ -1,3 +1,5 @@
+import { create } from 'zustand'
+
 /**
  * What the PC is playing, as the sound-reactive effects see it. The numbers come from the app's audio
  * listener (see src-tauri/src/audio.rs); nothing here touches Tauri, so effects can import it freely.
@@ -109,3 +111,16 @@ export function simulateAudio(t: number) {
     lastBeatCount = beat
   }
 }
+
+/** What the audio listener reports about itself (see `Status` in src-tauri/src/audio.rs). */
+export interface AudioStatus {
+  state: 'off' | 'listening' | 'error'
+  device: string
+  message: string
+  playing: boolean
+}
+
+
+export const useAudioStatus = create<{ status: AudioStatus }>(() => ({
+  status: { state: 'off', device: '', message: '', playing: false },
+}))
