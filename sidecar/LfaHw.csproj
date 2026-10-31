@@ -10,7 +10,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>lfa-hw</AssemblyName>
     <RootNamespace>LfaHw</RootNamespace>
-    <Version>0.2.2</Version>
+    <Version>0.2.3</Version>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>

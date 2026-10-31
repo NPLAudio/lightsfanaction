@@ -90,6 +90,17 @@ impl Kraken {
         if r[14] == 1 { Ok(()) } else { Err("Kraken refused to switch screen mode".into()) }
     }
 
+    /// Sends colors straight to the pump ring and, if given, the fan channel, using the same reports as
+    /// SignalRGB's plugin for this model: one 512-byte report per channel, GRB colors, no apply step.
+    /// This is not the older 64-byte protocol that OpenRGB uses, which the cooler only follows about once a second.
+    pub fn set_lights(&self, ring: &[[u8; 3]], fans: Option<&[[u8; 3]]>) -> Result<(), String> {
+        self.write(&lights_packet(1, ring, RING_LEDS))?;
+        if let Some(f) = fans {
+            self.write(&lights_packet(2, f, FAN_LEDS))?;
+        }
+        Ok(())
+    }
+
     /// Back to the built-in liquid temperature screen.
     pub fn show_liquid(&self) -> Result<(), String> {
         self.switch_bucket(0, 2)
@@ -194,5 +205,36 @@ impl Kraken {
             send(chunk)?;
         }
         Ok(())
+    }
+}
+
+/// LEDs in the pump ring.
+pub const RING_LEDS: usize = 24;
+/// LEDs SignalRGB addresses on the fan channel.
+pub const FAN_LEDS: usize = 40;
+
+/// One lighting report: `0x26 0x14`, the channel twice, then GRB triplets for `count` LEDs.
+fn lights_packet(channel: u8, colors: &[[u8; 3]], count: usize) -> Vec<u8> {
+    let mut p = vec![0x26, 0x14, channel, channel];
+    for i in 0..count {
+        let c = colors.get(i).copied().unwrap_or([0, 0, 0]);
+        p.extend([c[1], c[0], c[2]]);
+    }
+    p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lighting_report_is_grb_and_padded_to_the_led_count() {
+        let p = lights_packet(1, &[[1, 2, 3], [4, 5, 6]], RING_LEDS);
+        assert_eq!(&p[..4], &[0x26, 0x14, 1, 1]);
+        assert_eq!(&p[4..10], &[2, 1, 3, 5, 4, 6]);
+        assert_eq!(p.len(), 4 + RING_LEDS * 3);
+        assert!(p[10..].iter().all(|&b| b == 0));
+        assert_eq!(lights_packet(2, &[], FAN_LEDS).len(), 4 + FAN_LEDS * 3);
+        assert_eq!(&lights_packet(2, &[], FAN_LEDS)[..4], &[0x26, 0x14, 2, 2]);
     }
 }

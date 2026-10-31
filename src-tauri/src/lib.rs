@@ -144,6 +144,30 @@ async fn kraken_image(request: tauri::ipc::Request<'_>) -> Result<(), String> {
     }
 }
 
+/// A Kraken kept open for streamed lighting, so each frame is one cheap write.
+#[derive(Default)]
+struct KrakenLights(Mutex<Option<kraken::Kraken>>);
+
+/// Streams one frame straight to the cooler: the first `ring` LEDs go to the pump ring, the rest to the fan
+/// channel. `rgb` is 3 bytes per LED. A failure closes the handle so the next call reopens it.
+#[tauri::command]
+async fn kraken_lights(state: State<'_, KrakenLights>, rgb: Vec<u8>, ring: usize) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if guard.is_none() {
+        *guard = Some(kraken::Kraken::open()?);
+    }
+    let colors: Vec<[u8; 3]> = rgb.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let (ring_colors, fan_colors) = colors.split_at(ring.min(colors.len()));
+    let result = guard
+        .as_ref()
+        .ok_or("the Kraken is not open")?
+        .set_lights(ring_colors, if fan_colors.is_empty() { None } else { Some(fan_colors) });
+    if result.is_err() {
+        *guard = None;
+    }
+    result
+}
+
 #[derive(Default)]
 struct Keyboards(Mutex<std::collections::HashMap<String, via::Via>>);
 
@@ -325,6 +349,7 @@ pub fn run() {
         .manage(Rgb::default())
         .manage(Hw::default())
         .manage(Keyboards::default())
+        .manage(KrakenLights::default())
         .manage(control::Snapshot::default())
         .manage(std::sync::Arc::new(audio::Control::default()))
         .invoke_handler(tauri::generate_handler![
@@ -337,6 +362,7 @@ pub fn run() {
             kraken_display,
             kraken_liquid,
             kraken_image,
+            kraken_lights,
             via_list,
             via_color,
             via_leds,

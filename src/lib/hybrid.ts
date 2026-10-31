@@ -198,7 +198,15 @@ export class HybridBackend implements Backend {
         const ids = stableIds(found)
         this.rgbDevices = new Map(found.map((d, k) => [ids[k], d.index]))
         this.rgbNames = new Map(found.map((d) => [d.index, d.name]))
-        this.hwDevices = new Set(found.filter((d) => /kraken/i.test(d.name)).map((d) => ids[found.indexOf(d)]))
+        // the cooler is driven directly (see flushKraken); its built-in effects are only the fallback
+        this.hwDevices = new Set()
+        this.krakenDirect = new Map(
+          found
+            .filter((d) => /kraken/i.test(d.name))
+            .map((d) => [ids[found.indexOf(d)], d.zones[0]?.led_count ?? 24] as [string, number]),
+        )
+        this.krakenFrames.clear()
+        this.krakenFails.clear()
         this.hwKeys.clear()
         this.hwFallback.clear()
         this.pending.clear()
@@ -208,9 +216,7 @@ export class HybridBackend implements Backend {
           return found.map((d): Device => ({
             id: ids[found.indexOf(d)],
             name: d.name,
-            note: /kraken/i.test(d.name)
-              ? 'Runs the cooler\'s own built-in effects, so its motion cannot be kept in step with other devices. Solid colors match.'
-              : undefined,
+            note: undefined,
             kind: KIND[d.kind] ?? 'strip',
             layout: d.cols ? 'grid' : d.kind === 3 ? 'ring' : 'strip',
             ledCount: d.led_count,
@@ -296,6 +302,10 @@ export class HybridBackend implements Backend {
   }
 
   setLeds(id: string, colors: RGB[]) {
+    if (this.krakenDirect.has(id)) {
+      this.krakenFrames.set(id, colors)
+      return
+    }
     if (this.hwDevices.has(id) && !this.hwFallback.has(id)) return
     if (this.viaPerKey.has(id)) {
       this.viaFrames.set(id, colors.flat())
@@ -311,6 +321,44 @@ export class HybridBackend implements Backend {
     const idx = this.rgbDevices.get(id)
     if (idx === undefined) return this.sim.setLeds(id, colors)
     this.pending.set(idx, colors.flat())
+  }
+
+  /** Coolers driven straight over USB, with the number of LEDs on their pump ring. */
+  private krakenDirect = new Map<string, number>()
+  private krakenFrames = new Map<string, RGB[]>()
+  private krakenSent = new Map<string, { key: string; at: number }>()
+  private krakenFails = new Map<string, number>()
+
+  /**
+   * The cooler takes full-speed frames over its own USB interface (the reports SignalRGB uses); through OpenRGB it
+   * only followed about one a second. Sent at up to 20 a second, and a steady color is repeated now and then.
+   * If it cannot be reached (NZXT CAM running, say), the built-in effects take over.
+   */
+  private async flushKraken() {
+    const now = performance.now()
+    for (const [id, colors] of this.krakenFrames) {
+      const prev = this.krakenSent.get(id)
+      if (prev && now - prev.at < KRAKEN_MS) continue
+      const key = colors.flat().join(',')
+      if (prev && prev.key === key && now - prev.at < KEEPALIVE_MS) continue
+      try {
+        await invoke('kraken_lights', { rgb: colors.flat(), ring: this.krakenDirect.get(id) ?? 24 })
+        this.krakenSent.set(id, { key, at: now })
+        this.krakenFails.delete(id)
+      } catch (e) {
+        const fails = (this.krakenFails.get(id) ?? 0) + 1
+        this.krakenFails.set(id, fails)
+        if (fails >= 3) this.useKrakenEffects(id, String(e))
+      }
+    }
+  }
+
+  private useKrakenEffects(id: string, why: string) {
+    this.krakenDirect.delete(id)
+    this.krakenFrames.delete(id)
+    this.hwDevices.add(id)
+    this.hwKeys.delete(id)
+    this.hwLog(`direct Kraken lighting unavailable (${why}); using its built-in effects`)
   }
 
   private async flushVia() {
@@ -348,6 +396,7 @@ export class HybridBackend implements Backend {
     this.flushing = true
     try {
       await this.flushVia()
+      await this.flushKraken()
       await this.flushRgb()
     } finally {
       this.flushing = false
@@ -358,9 +407,10 @@ export class HybridBackend implements Backend {
   private rgbNames = new Map<number, string>()
 
   /**
-   * The Kraken applies lighting updates slowly: tested on a 2024 Elite, its ring follows one update a second
-   * but ignores faster ones (four a second left it on a stale color), and the flood also starves the
-   * fan control that shares its USB link. Everything else takes frames at full speed.
+   * Through OpenRGB's driver the Kraken only follows about one update a second (tested on a 2024 Elite; faster
+   * ones left it on a stale color and starved fan control on its USB link). That is the driver's older protocol,
+   * not the cooler: normally it is driven directly instead (see flushKraken), and this limit applies only
+   * if it has to be streamed through OpenRGB. Everything else takes frames at full speed.
    */
   private rgbInterval(idx: number) {
     return /kraken|nzxt/i.test(this.rgbNames.get(idx) ?? '') ? 1000 : 0
@@ -450,6 +500,8 @@ export class HybridBackend implements Backend {
 }
 
 const KEEPALIVE_MS = 2000
+/** Shortest gap between frames to the cooler: 20 a second leaves its USB link free for fan control. */
+const KRAKEN_MS = 50
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '')
 
