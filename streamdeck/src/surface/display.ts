@@ -1,7 +1,8 @@
 import type { JsonObject } from '@elgato/utils'
-import { action, SingletonAction, streamDeck, type KeyAction, type WillAppearEvent, type WillDisappearEvent } from '@elgato/streamdeck'
-import { openFrames, postDecks, type DeckKeys, type Frame } from '../api.js'
+import { action, SingletonAction, streamDeck, type KeyAction, type KeyDownEvent, type WillAppearEvent, type WillDisappearEvent } from '@elgato/streamdeck'
+import { openFrames, postDecks, send, type DeckKeys, type Frame } from '../api.js'
 import { OFFLINE, tileSvg } from '../render.js'
+import { onOverlayChange, overlayKeys } from './overlay.js'
 import { pngUri } from './png.js'
 import { patternFor, type RGB, type Source } from './source.js'
 
@@ -36,6 +37,8 @@ const SMOOTH = 8
 /** Frames from the app older than this mean it is gone (it sends many a second while lighting is running). */
 const STALE_MS = 4000
 const REPORT_MS = 5000
+/** The lighting behind a stat key is drawn small: it sits under text and is scaled to the key anyway. */
+const OVERLAY_SIZE = 48
 
 let settings: Settings = { ...DEFAULTS }
 let source: Source = patternFor(settings.pattern)
@@ -65,6 +68,7 @@ interface Key {
 }
 
 const keys = new Map<string, Key>()
+const anyKeys = () => keys.size + overlayKeys.size > 0
 
 // ---- pictures from the app -----------------------------------------------------------------------------------------
 
@@ -122,6 +126,13 @@ async function drawDeck(deckId: string) {
         upscale(bytes, index * per, meta.g, settings.size, out)
         sends.push(key.action.setImage(pngUri(settings.size, settings.size, out)))
       }
+      for (const key of overlayKeys.values()) {
+        if (key.deviceId !== deckId) continue
+        const index = meta.keys.findIndex(([c, r]) => c === key.column && r === key.row)
+        if (index < 0 || (index + 1) * per > bytes.length) continue
+        upscale(bytes, index * per, meta.g, OVERLAY_SIZE, out)
+        sends.push(key.action.setImage(tileSvg(key.tile(), pngUri(OVERLAY_SIZE, OVERLAY_SIZE, out.subarray(0, OVERLAY_SIZE * OVERLAY_SIZE * 3)))))
+      }
       await Promise.all(sends)
     }
   } catch (e) {
@@ -144,11 +155,17 @@ function showOffline() {
   shownOffline = true
   const uri = tileSvg(OFFLINE)
   for (const key of keys.values()) void key.action.setImage(uri)
+  for (const key of overlayKeys.values()) key.plain()
 }
 
 function report() {
   const decks = new Map<string, DeckKeys>()
   for (const k of keys.values()) {
+    const d = decks.get(k.deviceId) ?? { id: k.deviceId, name: k.deviceName, columns: k.columns, rows: k.rows, keys: [] }
+    d.keys.push({ column: k.column, row: k.row })
+    decks.set(k.deviceId, d)
+  }
+  for (const k of overlayKeys.values()) {
     const d = decks.get(k.deviceId) ?? { id: k.deviceId, name: k.deviceName, columns: k.columns, rows: k.rows, keys: [] }
     d.keys.push({ column: k.column, row: k.row })
     decks.set(k.deviceId, d)
@@ -254,7 +271,7 @@ function restart() {
   stopFrames?.()
   stopFrames = undefined
   connected = false
-  if (keys.size === 0) return
+  if (!anyKeys()) return
 
   if (settings.testPattern) {
     // the deck is not listed in the app while a test pattern is on, so there is nothing to report
@@ -286,6 +303,14 @@ function restart() {
   reportTimer = setInterval(report, REPORT_MS)
 }
 
+/** A key joined or left the surface: report it, and start or stop the work as needed. */
+function changed() {
+  if (!anyKeys() || !(timer || reportTimer || stopFrames)) restart()
+  else if (!settings.testPattern) report()
+}
+
+onOverlayChange(changed)
+
 @action({ UUID: 'com.nplaudio.lightsfanaction.display' })
 export class DisplayKeyAction extends SingletonAction {
   override onWillAppear(ev: WillAppearEvent) {
@@ -297,15 +322,19 @@ export class DisplayKeyAction extends SingletonAction {
     keys.set(ev.action.id, { action: ev.action, deviceId: device.id, deviceName: device.name, column: at.column, row: at.row, columns, rows })
     void ev.action.setTitle('')
     // a changed set of keys is reported straight away; the rest of the work carries on
-    if (timer || reportTimer || stopFrames) {
-      if (!settings.testPattern) report()
-    } else restart()
+    changed()
   }
 
   override onWillDisappear(ev: WillDisappearEvent) {
     keys.delete(ev.action.id)
-    if (keys.size === 0) restart()
-    else if (!settings.testPattern) report()
+    changed()
+  }
+
+  /** Pressing a display key sends a ripple across the deck, when the deck has that switched on in the app. */
+  override onKeyDown(ev: KeyDownEvent) {
+    const at = ev.action.coordinates
+    if (!at || settings.testPattern) return
+    void send({ cmd: 'ripple', deck: ev.action.device.id, column: at.column, row: at.row })
   }
 }
 

@@ -1,6 +1,7 @@
-import { deckDevices, useDecks, type DeckReport } from './lib/deckState'
+import { deckDevices, settingsFor, useDecks, type DeckReport } from './lib/deckState'
 import { EFFECTS } from './lib/effects'
 import { IS_TAURI, invoke } from './lib/hybrid'
+import { addRipple } from './lib/ripples'
 import type { FanMode } from './lib/types'
 import { kindEnabled, useSettings } from './settings'
 import { useStore } from './store'
@@ -97,6 +98,16 @@ export function runCommand(c: Record<string, unknown>) {
           store.setBrightnessFor([id], Math.min(100, Math.max(0, Math.round(now + (c.delta as number)))))
         }
       }
+      return
+    }
+    case 'ripple': {
+      // a display key was pressed on a deck
+      const { decks, settings } = useDecks.getState()
+      const deck = decks.find((d) => d.id === c.deck)
+      if (!deck || typeof c.column !== 'number' || typeof c.row !== 'number') return
+      if (!Number.isInteger(c.column) || !Number.isInteger(c.row) || c.column < 0 || c.row < 0 || c.column >= deck.columns || c.row >= deck.rows) return
+      const s = settingsFor(settings, deck.id)
+      if (s.ripples) addRipple(deck.id, c.column, c.row, s.gap / 100, performance.now())
       return
     }
     case 'fanMode': {

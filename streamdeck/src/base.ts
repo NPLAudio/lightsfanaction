@@ -3,6 +3,7 @@ import { SingletonAction, streamDeck, type DidReceiveSettingsEvent, type SendToP
 import type { Snapshot } from './api.js'
 import { current, subscribe } from './poller.js'
 import { OFFLINE, tileSvg, type Tile } from './render.js'
+import { removeOverlay, setOverlay } from './surface/overlay.js'
 
 export interface Dial {
   title: string
@@ -54,9 +55,14 @@ export abstract class LiveAction<S extends JsonObject = JsonObject> extends Sing
     return []
   }
 
-  protected draw(id: string) {
+  /**
+   * Draws the key. A key set to "draw over the lighting display" is drawn by the display module along with its
+   * deck's lighting, so this only draws it plainly when asked to (`plain`) or when it is not such a key.
+   */
+  draw(id: string, plain = false) {
     const s = shown.get(id)
     if (!s) return
+    if (!plain && s.settings.overlay === true && s.action.isKey() && s.action.coordinates) return
     const v = this.safeView(current(), s.settings as S)
     const key = JSON.stringify(v)
     if (key === s.last) return
@@ -79,10 +85,41 @@ export abstract class LiveAction<S extends JsonObject = JsonObject> extends Sing
     const id = ev.action.id
     shown.set(id, { action: ev.action, settings: ev.payload.settings, render: () => this.draw(id) })
     track()
+    this.syncOverlay(id)
     this.draw(id)
   }
 
+  /** Joins or leaves the deck's lighting display according to the key's "draw over the lighting display" setting. */
+  private syncOverlay(id: string) {
+    const s = shown.get(id)
+    if (!s) return
+    const at = s.action.isKey() ? s.action.coordinates : undefined
+    if (s.settings.overlay !== true || !s.action.isKey() || !at) {
+      removeOverlay(id)
+      return
+    }
+    const key = s.action
+    const { columns, rows } = key.device.size
+    setOverlay({
+      id,
+      action: key,
+      deviceId: key.device.id,
+      deviceName: key.device.name,
+      column: at.column,
+      row: at.row,
+      columns,
+      rows,
+      tile: () => this.safeView(current(), (shown.get(id)?.settings ?? {}) as S).tile,
+      plain: () => {
+        const cur = shown.get(id)
+        if (cur) cur.last = undefined
+        this.draw(id, true)
+      },
+    })
+  }
+
   override onWillDisappear(ev: WillDisappearEvent<S>) {
+    removeOverlay(ev.action.id)
     shown.delete(ev.action.id)
     untrack()
   }
@@ -92,7 +129,8 @@ export abstract class LiveAction<S extends JsonObject = JsonObject> extends Sing
     if (!s) return
     s.settings = ev.payload.settings
     s.last = undefined
-    this.draw(ev.action.id)
+    this.syncOverlay(ev.action.id)
+    this.draw(ev.action.id, s.settings.overlay !== true) // leaving the overlay: draw plainly at once
   }
 
   /** Answers the property inspector's drop-down requests. */

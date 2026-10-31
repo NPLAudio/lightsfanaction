@@ -26,9 +26,11 @@ export interface DeckSettings {
   detail: DeckDetail
   /** space between keys as a percentage of a key's width */
   gap: number
+  /** pressing a display key sends a ripple across the deck */
+  ripples: boolean
 }
 
-export const DEFAULT_DECK: DeckSettings = { fps: 15, detail: 'smooth', gap: 20 }
+export const DEFAULT_DECK: DeckSettings = { fps: 15, detail: 'smooth', gap: 20, ripples: true }
 
 /** Samples across and down each key. */
 export const DETAIL_GRID: Record<DeckDetail, number> = { color: 1, smooth: 8, fine: 16 }

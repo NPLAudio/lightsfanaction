@@ -6,6 +6,10 @@
 		<script src="sdpi-components.js"></script>
 	</head>
 	<body>
+		<sdpi-item label="Lighting">
+			<sdpi-checkbox setting="overlay" label="Draw over the lighting display"></sdpi-checkbox>
+			<p>Joins this deck's lighting picture, with this key's readout on top.</p>
+		</sdpi-item>
 		<sdpi-item label="Fan">
 			<sdpi-select setting="fanId" datasource="getFans" loading="Loading fans..." placeholder="Choose a fan" hot-reload></sdpi-select>
 		</sdpi-item>

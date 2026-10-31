@@ -1,7 +1,7 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "Name": "Lights Fan Action",
-  "Version": "0.3.0.0",
+  "Version": "0.3.1.0",
   "Author": "NPLAudio",
   "Description": "Show temperatures, fan speeds and cooler status, control lighting, and turn any keys into part of one lighting display. Needs Lights Fan Action running on the same PC.",
   "Category": "Lights Fan Action",
@@ -96,7 +96,8 @@
           "Push": "",
           "Touch": ""
         }
-      }
+      },
+      "PropertyInspectorPath": "ui/cooler.html"
     },
     {
       "Name": "Lighting effect",
@@ -143,7 +144,7 @@
       "Name": "Lighting display key",
       "UUID": "com.nplaudio.lightsfanaction.display",
       "Icon": "imgs/actions/display",
-      "Tooltip": "Drop this on any key to show lighting there. Every display key on a deck shows its own part of one picture, laid out by position, as if the keys were one screen. Keys without it are never touched.",
+      "Tooltip": "Drop this on any key to show lighting there. Every display key on a deck shows its own part of one picture, laid out by position, as if the keys were one screen. Keys without it are never touched. Pressing one sends a ripple across the deck.",
       "PropertyInspectorPath": "ui/display.html",
       "Controllers": [
         "Keypad"

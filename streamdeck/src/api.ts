@@ -16,6 +16,7 @@ export type Command =
   | { cmd: 'brightness'; device: string; value: number }
   | { cmd: 'brightness'; device: string; delta: number }
   | { cmd: 'fanMode'; fan: string; mode: 'curve' | 'full' | 'toggle' }
+  | { cmd: 'ripple'; deck: string; column: number; row: number }
 
 interface Info {
   port: number

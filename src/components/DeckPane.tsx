@@ -4,9 +4,9 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Disclosure } from '@/components/Disclosure'
 import { EffectCard, EffectOptions } from '@/components/EffectControls'
-import { SliderField } from '@/components/Field'
+import { SliderField, SwitchField } from '@/components/Field'
 import { frames } from '@/engine'
-import { DETAIL_GRID, deckDeviceId, deckLayout, settingsFor, useDecks, type DeckDetail, type DeckReport } from '@/lib/deckState'
+import { DEFAULT_DECK, DETAIL_GRID, deckDeviceId, deckLayout, settingsFor, useDecks, type DeckDetail, type DeckReport } from '@/lib/deckState'
 import type { Assignment, Device } from '@/lib/types'
 
 const DETAIL_LABEL: Record<DeckDetail, string> = {
@@ -18,7 +18,7 @@ const DETAIL_LABEL: Record<DeckDetail, string> = {
 /** The deck drawn as it is: every key slot outlined, and the keys that carry a display key filled with the live picture. */
 function DeckPreview({ dev, deck, gap, g }: { dev: Device; deck: DeckReport; gap: number; g: number }) {
   const ref = useRef<HTMLCanvasElement>(null)
-  const layout = useMemo(() => deckLayout(deck, { fps: 15, detail: g === 1 ? 'color' : g === 8 ? 'smooth' : 'fine', gap: gap * 100 }), [deck, gap, g])
+  const layout = useMemo(() => deckLayout(deck, { ...DEFAULT_DECK, detail: g === 1 ? 'color' : g === 8 ? 'smooth' : 'fine', gap: gap * 100 }), [deck, gap, g])
   const unitsW = deck.columns + (deck.columns - 1) * gap
   const unitsH = deck.rows + (deck.rows - 1) * gap
   const width = 560
@@ -90,7 +90,7 @@ export function DeckPane({ dev, a }: { dev: Device; a: Assignment }) {
       <EffectCard dev={dev} a={a} />
       <EffectOptions dev={dev} a={a} />
 
-      <Disclosure title="Deck options" summary={`${s.fps} a second · ${DETAIL_LABEL[s.detail]} · gap ${s.gap}%`}>
+      <Disclosure title="Deck options" summary={`${s.fps} a second · ${DETAIL_LABEL[s.detail]} · gap ${s.gap}%${s.ripples ? ' · ripples' : ''}`}>
         <SliderField label="Updates a second" value={s.fps} min={1} max={30} onChange={(v) => patch(deck.id, { fps: v })} />
         <div className="space-y-2">
           <Label>Detail</Label>
@@ -114,6 +114,12 @@ export function DeckPane({ dev, a }: { dev: Device; a: Assignment }) {
             More detail lets an effect flow smoothly across each key, at the cost of more work for the Stream Deck software.
           </p>
         </div>
+        <SwitchField
+          label="Key-press ripples"
+          description="Pressing a display key sends a ring of light across the deck, over the running effect."
+          checked={s.ripples}
+          onChange={(v) => patch(deck.id, { ripples: v })}
+        />
         <SliderField
           label="Gap between keys"
           value={s.gap}

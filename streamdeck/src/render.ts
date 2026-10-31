@@ -35,14 +35,18 @@ function valueSize(v: string): number {
   return v.length <= 9 ? 24 : 19
 }
 
-export function tileSvg(t: Tile): string {
+/**
+ * With a `backdrop` (a PNG data URI) the key's lighting shows behind its readout: the picture fills the key, a
+ * scrim keeps the text readable, and the key's own dark background is left out.
+ */
+export function tileSvg(t: Tile, backdrop?: string): string {
   const tone = TONES[t.tone ?? 'idle']
   const ring = t.active ? `<rect x="3" y="3" width="138" height="138" rx="16" fill="none" stroke="#fafafa" stroke-width="4"/>` : ''
   const badge = t.badge
     ? `<rect x="92" y="10" width="44" height="20" rx="10" fill="${tone}"/><text x="114" y="25" font-size="13" font-weight="700" text-anchor="middle" fill="#18181b">${esc(t.badge)}</text>`
     : ''
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144" font-family="Segoe UI, Arial, sans-serif">
-<rect width="144" height="144" rx="18" fill="#18181b"/>${ring}
+${backdrop ? `<image href="${backdrop}" width="144" height="144" preserveAspectRatio="none"/><rect width="144" height="144" fill="#08080e" fill-opacity="0.55"/>` : '<rect width="144" height="144" rx="18" fill="#18181b"/>'}${ring}
 <text x="${t.badge ? 12 : 72}" y="28" font-size="19" text-anchor="${t.badge ? 'start' : 'middle'}" fill="#a1a1aa">${esc(fit(t.label, t.badge ? 8 : 12))}</text>${badge}
 <text x="72" y="${t.sub ? 82 : 92}" font-size="${valueSize(t.value)}" font-weight="700" text-anchor="middle" fill="#fafafa">${esc(t.value)}</text>
 ${t.sub ? `<text x="72" y="112" font-size="19" text-anchor="middle" fill="#d4d4d8">${esc(fit(t.sub, 14))}</text>` : ''}

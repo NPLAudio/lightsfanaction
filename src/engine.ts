@@ -6,6 +6,7 @@ import { setAudioActive } from './lib/audioLink'
 import { effectById } from './lib/effects'
 import { ledsFor } from './lib/layout'
 import { publishDeckFrame } from './lib/deckStream'
+import { applyDeckRipples } from './lib/ripples'
 import { screenTheme } from './lib/screen'
 import type { FanLive, RGB } from './lib/types'
 import { kindEnabled, simulatorActive, useSettings } from './settings'
@@ -44,6 +45,7 @@ function renderFrames() {
       const c = fx.render(led, t, a.params)
       return [Math.round(c[0] * k), Math.round(c[1] * k), Math.round(c[2] * k)]
     })
+    if (d.kind === 'deck' && d.positions) applyDeckRipples(d.id, d.positions, out, performance.now())
     frames.set(d.id, out)
     if (d.kind === 'deck') publishDeckFrame(d.id, out, performance.now())
     backend.syncEffect(d.id, own)

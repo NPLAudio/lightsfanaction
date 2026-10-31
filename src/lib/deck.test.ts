@@ -90,3 +90,67 @@ describe('decks in the lighting list', () => {
     expect(useStore.getState().selectedDevice).toBe('a')
   })
 })
+
+import { addRipple, applyRipples, clearRipples } from './ripples'
+import { runCommand } from '../control'
+import { useDecks } from './deckState'
+import type { RGB } from './types'
+
+describe('key-press ripples', () => {
+  const deck: DeckReport = { id: 'd', name: 'XL', columns: 8, rows: 4, keys: [] }
+  // a row of sample points straight along the top of the deck, one per key width
+  const points = (n: number): [number, number][] => Array.from({ length: n }, (_, i) => [(i + 0.5) / 8, 0.5 / 4] as [number, number])
+  const dark = (n: number): RGB[] => Array.from({ length: n }, () => [0, 0, 0])
+
+  beforeEach(() => clearRipples())
+
+  it('is a ring that spreads outward from the pressed key and fades', () => {
+    addRipple('d', 0, 0, 0, 0)
+    const early = dark(8)
+    applyRipples(deck, 0, points(8), early, 200) // 0.2 s: ring about 1.1 keys out
+    const bright = early.map((c) => c[0])
+    expect(bright.indexOf(Math.max(...bright))).toBe(1)
+    expect(bright[7]).toBeLessThan(1)
+
+    const later = dark(8)
+    addRipple('d', 0, 0, 0, 1000)
+    applyRipples(deck, 0, points(8), later, 1600) // 0.6 s: ring about 3.3 keys out, dimmer
+    const bright2 = later.map((c) => c[0])
+    expect(bright2.indexOf(Math.max(...bright2))).toBeGreaterThanOrEqual(3)
+    expect(Math.max(...bright2)).toBeLessThan(Math.max(...bright))
+  })
+
+  it('leaves other decks alone and is gone after its lifetime', () => {
+    addRipple('other', 0, 0, 0, 0)
+    const c = dark(8)
+    applyRipples(deck, 0, points(8), c, 200)
+    expect(c.every((p) => p[0] === 0)).toBe(true)
+    addRipple('d', 0, 0, 0, 0)
+    const gone = dark(8)
+    applyRipples(deck, 0, points(8), gone, 5000)
+    expect(gone.every((p) => p[0] === 0)).toBe(true)
+  })
+
+  it('takes the ripple command only for a known deck and a real key, and only when switched on', () => {
+    useDecks.setState({ decks: [deck], settings: {} })
+    const before = performance.now()
+    runCommand({ cmd: 'ripple', deck: 'd', column: 2, row: 1 })
+    const c = dark(8)
+    applyRipples(deck, 0.2, points(8), c, performance.now() + 150)
+    expect(c.some((p) => p[0] > 1)).toBe(true)
+
+    clearRipples()
+    runCommand({ cmd: 'ripple', deck: 'nope', column: 0, row: 0 })
+    runCommand({ cmd: 'ripple', deck: 'd', column: 99, row: 0 })
+    runCommand({ cmd: 'ripple', deck: 'd', column: 0.5, row: 0 })
+    const none = dark(8)
+    applyRipples(deck, 0.2, points(8), none, before + 200)
+    expect(none.every((p) => p[0] === 0)).toBe(true)
+
+    useDecks.getState().patch('d', { ripples: false })
+    runCommand({ cmd: 'ripple', deck: 'd', column: 0, row: 0 })
+    const off = dark(8)
+    applyRipples(deck, 0.2, points(8), off, performance.now() + 100)
+    expect(off.every((p) => p[0] === 0)).toBe(true)
+  })
+})
