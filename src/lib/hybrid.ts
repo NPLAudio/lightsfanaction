@@ -1,6 +1,7 @@
 import type { Assignment, Backend, Device, DeviceKind, FanInfo, HardwareState, RGB, Sensor } from './types'
-import type { InvokeArgs } from '@tauri-apps/api/core'
+import type { InvokeArgs, InvokeOptions } from '@tauri-apps/api/core'
 import { hwEffectFor } from './hwEffects'
+import { DECK_PREFIX, deckDevices, useDecks } from './deckState'
 import { SCREEN_ID } from './screen'
 import { Q6_ANSI_POSITIONS } from './keychronQ6'
 import { SimBackend } from './sim'
@@ -36,9 +37,9 @@ export type HwState = 'off' | 'connecting' | 'on' | 'error'
 
 export const IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
+export async function invoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core')
-  return invoke<T>(cmd, args)
+  return invoke<T>(cmd, args, options)
 }
 
 /**
@@ -132,7 +133,8 @@ export class HybridBackend implements Backend {
 
     const lights = [...rgbKept, ...viaKept]
     const screen = await this.listScreen()
-    return lights.length || !this.simActive ? [...lights, ...screen] : [...(await this.sim.listDevices()), ...screen]
+    const decks = deckDevices(useDecks.getState().decks, useDecks.getState().settings)
+    return lights.length || !this.simActive ? [...lights, ...screen, ...decks] : [...(await this.sim.listDevices()), ...screen, ...decks]
   }
 
   /** The cooler's screen, offered as a device so what it shows is chosen in the lighting list like any effect. */
@@ -325,7 +327,7 @@ export class HybridBackend implements Backend {
   }
 
   setLeds(id: string, colors: RGB[]) {
-    if (id === SCREEN_ID) return // drawn by the screen loop, not sent as lights
+    if (id === SCREEN_ID || id.startsWith(DECK_PREFIX)) return // the screen loop and the deck stream send these
     if (this.krakenDirect.has(id)) {
       this.krakenFrames.set(id, colors)
       return

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { KeyboardIcon, LightbulbIcon, MemoryStickIcon, MonitorIcon, MousePointerIcon, FanIcon, CpuIcon } from 'lucide-react'
+import { KeyboardIcon, LightbulbIcon, MemoryStickIcon, LayoutGridIcon, MonitorIcon, MousePointerIcon, FanIcon, CpuIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { DeviceCanvas } from '@/components/LedCanvas'
 import { Disclosure } from '@/components/Disclosure'
 import { EffectCard, EffectOptions } from '@/components/EffectControls'
+import { DeckPane } from '@/components/DeckPane'
 import { ScreenPane } from '@/components/ScreenPane'
 import { backend } from '@/lib/backend'
 import { effectById } from '@/lib/effects'
@@ -25,6 +26,7 @@ const ICON: Record<Device['kind'], typeof KeyboardIcon> = {
   strip: LightbulbIcon,
   mouse: MousePointerIcon,
   screen: MonitorIcon,
+  deck: LayoutGridIcon,
 }
 
 function previewSize(d: Device, big: boolean) {
@@ -159,6 +161,8 @@ export function LightingPage() {
         <div className="mx-auto max-w-3xl space-y-4 p-6">
           {dev.kind === 'screen' ? (
             <ScreenPane dev={dev} a={a} />
+          ) : dev.kind === 'deck' ? (
+            <DeckPane dev={dev} a={a} />
           ) : (
             <>
           <div>

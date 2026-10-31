@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Lighting display key</title>
+		<script src="sdpi-components.js"></script>
+	</head>
+	<body>
+		<sdpi-item label="Image size">
+			<sdpi-select setting="size" global default="96">
+				<option value="48">48 px</option>
+				<option value="72">72 px</option>
+				<option value="96">96 px</option>
+				<option value="144">144 px</option>
+			</sdpi-select>
+		</sdpi-item>
+		<sdpi-item>
+			<details>
+				<summary>About this key</summary>
+				<p>Drop it on any key. Every display key on the same deck shows its own part of one picture, placed by its column and row, so the keys act like one screen. The picture is Lights Fan Action's lighting for this deck: the deck shows up in the app's lighting list, where you choose its effect, how much detail it has, how fast it updates, and the gap between keys.</p>
+				<p>Keys that do not carry this action are never changed. Image size applies to all display keys; a larger size looks sharper but is more work for the Stream Deck software.</p>
+			</details>
+		</sdpi-item>
+		<sdpi-item label="Test pattern">
+			<sdpi-checkbox setting="testPattern" global label="Show a built-in pattern instead (for testing)"></sdpi-checkbox>
+		</sdpi-item>
+		<sdpi-item label="Updates a second">
+			<sdpi-range setting="fps" global min="1" max="30" default="12" showlabels></sdpi-range>
+		</sdpi-item>
+		<sdpi-item label="Detail">
+			<sdpi-select setting="detail" global default="smooth">
+				<option value="color">One color per key</option>
+				<option value="smooth">Smooth across each key</option>
+				<option value="full">Full detail</option>
+			</sdpi-select>
+		</sdpi-item>
+		<sdpi-item label="Gap between keys">
+			<sdpi-range setting="gap" global min="0" max="60" default="20" showlabels></sdpi-range>
+		</sdpi-item>
+		<sdpi-item label="Pattern">
+			<sdpi-select setting="pattern" global default="sweep">
+				<option value="sweep">Sweeping bar</option>
+				<option value="wave">Rainbow wave</option>
+			</sdpi-select>
+		</sdpi-item>
+		<sdpi-item>
+			<details>
+				<summary>About the test pattern</summary>
+				<p>With the test pattern on, the display keys ignore the app and draw a pattern here, using the rate, detail and gap above. It is for checking how your deck handles frames.</p>
+			</details>
+		</sdpi-item>
+	</body>
+</html>

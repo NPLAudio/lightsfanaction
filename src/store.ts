@@ -33,6 +33,8 @@ interface State {
   lcdError: string | null
 
   init(): Promise<void>
+  /** Replaces the Stream Deck devices (they come and go as the plugin reports them) without rescanning anything else. */
+  syncDecks(decks: Device[]): void
   selectDevice(id: string): void
   setSyncAll(v: boolean): void
   setEffect(deviceId: string, effectId: string): void
@@ -118,6 +120,15 @@ export const useStore = create<State>()(
           selectedFan: present.some((x) => x.id === selectedFan) ? selectedFan : (present[0]?.id ?? selectedFan),
           ready: true,
         })
+      },
+
+      syncDecks(decks) {
+        const { devices, assignments, selectedDevice } = get()
+        const rest = devices.filter((d) => d.kind !== 'deck')
+        const a = { ...assignments }
+        for (const d of decks) a[d.id] ??= newAssignment('rainbow')
+        const all = [...rest, ...decks]
+        set({ devices: all, assignments: a, selectedDevice: all.some((d) => d.id === selectedDevice) ? selectedDevice : (all[0]?.id ?? '') })
       },
 
       selectDevice: (id) => set({ selectedDevice: id }),

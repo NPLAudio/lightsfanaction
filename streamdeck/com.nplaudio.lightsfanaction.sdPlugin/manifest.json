@@ -1,9 +1,9 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "Name": "Lights Fan Action",
-  "Version": "0.1.0.0",
+  "Version": "0.3.0.0",
   "Author": "NPLAudio",
-  "Description": "Show temperatures, fan speeds and cooler status, and control lighting from your Stream Deck. Needs Lights Fan Action running on the same PC.",
+  "Description": "Show temperatures, fan speeds and cooler status, control lighting, and turn any keys into part of one lighting display. Needs Lights Fan Action running on the same PC.",
   "Category": "Lights Fan Action",
   "CategoryIcon": "imgs/plugin/category",
   "Icon": "imgs/plugin/icon",
@@ -138,6 +138,22 @@
           "Push": "Lights off or on"
         }
       }
+    },
+    {
+      "Name": "Lighting display key",
+      "UUID": "com.nplaudio.lightsfanaction.display",
+      "Icon": "imgs/actions/display",
+      "Tooltip": "Drop this on any key to show lighting there. Every display key on a deck shows its own part of one picture, laid out by position, as if the keys were one screen. Keys without it are never touched.",
+      "PropertyInspectorPath": "ui/display.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/display",
+          "ShowTitle": false
+        }
+      ]
     }
   ]
 }

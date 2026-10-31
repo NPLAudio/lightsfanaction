@@ -1,6 +1,6 @@
 [package]
 name = "lightsfanaction"
-version = "0.2.8"
+version = "0.3.0"
 description = "Open-source RGB lighting and fan control"
 edition = "2021"
 license = "MIT"

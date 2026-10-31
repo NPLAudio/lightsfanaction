@@ -5,6 +5,7 @@ import { simulateAudio, tickAudio } from './lib/audio'
 import { setAudioActive } from './lib/audioLink'
 import { effectById } from './lib/effects'
 import { ledsFor } from './lib/layout'
+import { publishDeckFrame } from './lib/deckStream'
 import { screenTheme } from './lib/screen'
 import type { FanLive, RGB } from './lib/types'
 import { kindEnabled, simulatorActive, useSettings } from './settings'
@@ -44,6 +45,7 @@ function renderFrames() {
       return [Math.round(c[0] * k), Math.round(c[1] * k), Math.round(c[2] * k)]
     })
     frames.set(d.id, out)
+    if (d.kind === 'deck') publishDeckFrame(d.id, out, performance.now())
     backend.syncEffect(d.id, own)
     backend.setLeds(d.id, out)
   }

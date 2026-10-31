@@ -256,6 +256,24 @@ fn control_publish(state: State<'_, control::Snapshot>, json: String) {
     }
 }
 
+/// Sends one lighting frame for a Stream Deck to the plugin. The raw body is the pixels (3 bytes each); the `x-meta`
+/// header is a JSON description of them (which deck, how the pixels are arranged).
+#[tauri::command]
+fn deck_frame(subs: State<'_, control::Subscribers>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw pixels".into());
+    };
+    let meta = request
+        .headers()
+        .get("x-meta")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
+        .filter(|v| v.is_object())
+        .ok_or("x-meta must be a JSON object")?;
+    control::publish_frame(&subs, meta, bytes);
+    Ok(())
+}
+
 /// Shows the Stream Deck plugin installer in Explorer; double-clicking it installs the plugin.
 #[tauri::command]
 fn show_streamdeck_plugin() -> Result<(), String> {
@@ -351,7 +369,11 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-            control::start(app.handle().clone(), app.state::<control::Snapshot>().inner().clone());
+            control::start(
+                app.handle().clone(),
+                app.state::<control::Snapshot>().inner().clone(),
+                app.state::<control::Subscribers>().inner().clone(),
+            );
             audio::start(app.handle().clone(), app.state::<std::sync::Arc<audio::Control>>().inner().clone());
             // launched at login with --minimized: stay in the tray until opened
             if !std::env::args().any(|a| a == "--minimized") {
@@ -388,6 +410,7 @@ pub fn run() {
         .manage(KrakenLights::default())
         .manage(LcdStreamState::default())
         .manage(control::Snapshot::default())
+        .manage(control::Subscribers::default())
         .manage(std::sync::Arc::new(audio::Control::default()))
         .invoke_handler(tauri::generate_handler![
             openrgb_connect,
@@ -411,6 +434,7 @@ pub fn run() {
             hw_stop,
             set_close_to_tray,
             control_publish,
+            deck_frame,
             audio::audio_set_active,
             audio::audio_set_device,
             audio::audio_devices,

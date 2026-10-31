@@ -1,6 +1,6 @@
 export type RGB = [number, number, number]
 
-export type DeviceKind = 'keyboard' | 'fan' | 'gpu' | 'ram' | 'strip' | 'mouse' | 'screen'
+export type DeviceKind = 'keyboard' | 'fan' | 'gpu' | 'ram' | 'strip' | 'mouse' | 'screen' | 'deck'
 export type Layout = 'strip' | 'ring' | 'grid' | 'custom'
 
 export interface Zone {

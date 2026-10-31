@@ -70,3 +70,78 @@ export async function send(c: Command): Promise<boolean> {
   const res = await call('/command', { method: 'POST', body: JSON.stringify(c) })
   return res?.status === 202
 }
+
+export interface DeckKeys {
+  id: string
+  name: string
+  columns: number
+  rows: number
+  keys: { column: number; row: number }[]
+}
+
+/** Tells the app which decks carry display keys, and where. Sent every few seconds, so a quiet plugin makes the decks disappear. */
+export async function postDecks(decks: DeckKeys[]): Promise<boolean> {
+  const res = await call('/decks', { method: 'POST', body: JSON.stringify({ decks }) })
+  return res?.status === 202
+}
+
+/** One lighting frame for a deck: `bytes` is 3 bytes a sample, `g` x `g` samples for each key in `keys`, in that order. */
+export interface Frame {
+  meta: { deck: string; g: number; columns: number; rows: number; keys: [number, number][] }
+  bytes: Uint8Array
+}
+
+/**
+ * Listens for lighting frames from the app and keeps the connection going: when it drops, it tries again. Returns a
+ * function that stops listening.
+ */
+export function openFrames(on: { frame(f: Frame): void; open(): void; close(): void }): () => void {
+  let stopped = false
+  const abort = new AbortController()
+
+  const run = async () => {
+    while (!stopped) {
+      info ??= await readInfo()
+      if (info) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${info.port}/frames`, {
+            headers: { Authorization: `Bearer ${info.token}` },
+            signal: abort.signal,
+          })
+          if (res.ok && res.body) {
+            on.open()
+            const decoder = new TextDecoder()
+            let pending = ''
+            for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+              pending += decoder.decode(chunk, { stream: true })
+              let end: number
+              while ((end = pending.indexOf('\n\n')) >= 0) {
+                const event = pending.slice(0, end)
+                pending = pending.slice(end + 2)
+                const line = event.split('\n').find((l) => l.startsWith('data: '))
+                if (!line) continue // a comment or keep-alive
+                try {
+                  const j = JSON.parse(line.slice(6)) as { meta: Frame['meta']; b64: string }
+                  on.frame({ meta: j.meta, bytes: Buffer.from(j.b64, 'base64') })
+                } catch {
+                  /* a damaged event: skip it */
+                }
+              }
+            }
+          } else if (res.status === 401 || res.status === 421) {
+            info = undefined // the app restarted with a new token
+          }
+        } catch {
+          info = undefined
+        }
+        on.close()
+      }
+      if (!stopped) await new Promise((r) => setTimeout(r, 1000))
+    }
+  }
+  void run()
+  return () => {
+    stopped = true
+    abort.abort()
+  }
+}

@@ -25,6 +25,38 @@ const MAX_BODY: usize = 4096;
 #[derive(Default, Clone)]
 pub struct Snapshot(pub Arc<Mutex<String>>);
 
+/// Clients listening on `/frames` (the Stream Deck plugin), which are sent lighting frames as they are rendered.
+#[derive(Default, Clone)]
+pub struct Subscribers(pub Arc<Mutex<Vec<TcpStream>>>);
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub fn base64(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        out.push(BASE64[(n >> 18) as usize & 63] as char);
+        out.push(BASE64[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { BASE64[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { BASE64[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+fn broadcast(subs: &Subscribers, text: &str) {
+    if let Ok(mut list) = subs.0.lock() {
+        list.retain_mut(|s| s.set_write_timeout(Some(Duration::from_millis(150))).is_ok() && s.write_all(text.as_bytes()).is_ok());
+    }
+}
+
+/// Sends one lighting frame to every listener, as a server-sent event: `meta` (what the pixels are) and the pixels.
+pub fn publish_frame(subs: &Subscribers, meta: serde_json::Value, bytes: &[u8]) {
+    if subs.0.lock().map(|l| l.is_empty()).unwrap_or(true) {
+        return; // nobody is listening: do not even encode
+    }
+    broadcast(subs, &format!("data: {{\"meta\":{meta},\"b64\":\"{}\"}}\n\n", base64(bytes)));
+}
+
 pub fn info_path() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
     Some(base.join("Lights Fan Action").join("control.json"))
@@ -60,7 +92,7 @@ fn same(a: &str, b: &str) -> bool {
 }
 
 /// Starts the server on a free loopback port and records where it is. Failure only disables the API.
-pub fn start(app: AppHandle, snapshot: Snapshot) {
+pub fn start(app: AppHandle, snapshot: Snapshot, subs: Subscribers) {
     let Some(token) = new_token() else { return };
     let Ok(listener) = TcpListener::bind("127.0.0.1:0") else { return };
     let Ok(addr) = listener.local_addr() else { return };
@@ -75,13 +107,21 @@ pub fn start(app: AppHandle, snapshot: Snapshot) {
         return;
     }
 
+    // keeps idle listeners alive, and drops the ones that have gone away
+    let beat = subs.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(5));
+        broadcast(&beat, ": ping\n\n");
+    });
+
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let app = app.clone();
             let snapshot = snapshot.clone();
+            let subs = subs.clone();
             let token = token.clone();
             std::thread::spawn(move || {
-                let _ = handle(stream, port, &token, &|v| { let _ = app.emit("control-command", v); }, &snapshot);
+                let _ = handle(stream, port, &token, &|event, v| { let _ = app.emit(event, v); }, &snapshot, &subs);
             });
         }
     });
@@ -102,8 +142,14 @@ fn reply(stream: &mut TcpStream, status: &str, body: &str) -> std::io::Result<()
     )
 }
 
-fn handle(mut stream: TcpStream, port: u16, token: &str, emit: &dyn Fn(serde_json::Value), snapshot: &Snapshot) -> std::io::Result<()> {
-    let result = respond(&mut stream, port, token, emit, snapshot);
+type Emit<'a> = &'a dyn Fn(&str, serde_json::Value);
+
+fn handle(mut stream: TcpStream, port: u16, token: &str, emit: Emit, snapshot: &Snapshot, subs: &Subscribers) -> std::io::Result<()> {
+    let result = respond(&mut stream, port, token, emit, snapshot, subs);
+    // a listener's connection stays open; it now belongs to the subscriber list
+    if matches!(result, Ok(true)) {
+        return Ok(());
+    }
     // closing with request data still unread makes Windows reset the connection and the client can lose the
     // reply, so finish our side and let the client's remaining bytes drain first
     let _ = stream.shutdown(std::net::Shutdown::Write);
@@ -114,10 +160,11 @@ fn handle(mut stream: TcpStream, port: u16, token: &str, emit: &dyn Fn(serde_jso
             break;
         }
     }
-    result
+    result.map(|_| ())
 }
 
-fn respond(stream: &mut TcpStream, port: u16, token: &str, emit: &dyn Fn(serde_json::Value), snapshot: &Snapshot) -> std::io::Result<()> {
+/// Answers one request. True means the connection was kept open as a listener.
+fn respond(stream: &mut TcpStream, port: u16, token: &str, emit: Emit, snapshot: &Snapshot, subs: &Subscribers) -> std::io::Result<bool> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -147,34 +194,44 @@ fn respond(stream: &mut TcpStream, port: u16, token: &str, emit: &dyn Fn(serde_j
     }
 
     let loopback = host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}");
+    let done = |r: std::io::Result<()>| r.map(|_| false);
     if !loopback {
-        return reply(stream, "421 Misdirected Request", r#"{"error":"bad host"}"#);
+        return done(reply(stream, "421 Misdirected Request", r#"{"error":"bad host"}"#));
     }
     let given = auth.strip_prefix("Bearer ").unwrap_or("");
     if !same(given, token) {
-        return reply(stream, "401 Unauthorized", r#"{"error":"bad token"}"#);
+        return done(reply(stream, "401 Unauthorized", r#"{"error":"bad token"}"#));
     }
 
     match (method, path) {
         ("GET", "/state") => {
             let body = snapshot.0.lock().map(|s| s.clone()).unwrap_or_default();
-            reply(stream, "200 OK", if body.is_empty() { "{}" } else { &body })
+            done(reply(stream, "200 OK", if body.is_empty() { "{}" } else { &body }))
         }
-        ("POST", "/command") => {
-            if length > MAX_BODY {
-                return reply(stream, "413 Payload Too Large", r#"{"error":"too large"}"#);
+        ("GET", "/frames") => {
+            let keep = stream.try_clone()?;
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n: connected\n\n")?;
+            subs.0.lock().map_err(|_| std::io::Error::other("listeners unavailable"))?.push(keep);
+            Ok(true)
+        }
+        ("POST", "/command" | "/decks") => {
+            // commands are small; a deck report lists the keys placed on each deck
+            let limit = if path == "/decks" { 16 * 1024 } else { MAX_BODY };
+            if length > limit {
+                return done(reply(stream, "413 Payload Too Large", r#"{"error":"too large"}"#));
             }
             let mut body = vec![0u8; length];
             reader.read_exact(&mut body)?;
+            let event = if path == "/decks" { "decks-report" } else { "control-command" };
             match serde_json::from_slice::<serde_json::Value>(&body) {
                 Ok(v) if v.is_object() => {
-                    emit(v);
-                    reply(stream, "202 Accepted", r#"{"ok":true}"#)
+                    emit(event, v);
+                    done(reply(stream, "202 Accepted", r#"{"ok":true}"#))
                 }
-                _ => reply(stream, "400 Bad Request", r#"{"error":"expected a JSON object"}"#),
+                _ => done(reply(stream, "400 Bad Request", r#"{"error":"expected a JSON object"}"#)),
             }
         }
-        _ => reply(stream, "404 Not Found", r#"{"error":"not found"}"#),
+        _ => done(reply(stream, "404 Not Found", r#"{"error":"not found"}"#)),
     }
 }
 
@@ -191,19 +248,31 @@ mod tests {
     }
 
     /// Runs the real request handler on a loopback port with a fake window behind it.
-    fn serve(snapshot: &str) -> (u16, Arc<Mutex<Vec<serde_json::Value>>>) {
+    fn serve(snapshot: &str) -> (u16, Arc<Mutex<Vec<serde_json::Value>>>, Subscribers) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let got = Arc::new(Mutex::new(Vec::new()));
         let snap = Snapshot(Arc::new(Mutex::new(snapshot.to_string())));
+        let subs = Subscribers::default();
+        let listeners = subs.clone();
         let sink = got.clone();
         std::thread::spawn(move || {
             for s in listener.incoming().flatten() {
                 let sink = sink.clone();
-                let _ = handle(s, port, "secret", &move |v| sink.lock().unwrap().push(v), &snap);
+                let _ = handle(
+                    s,
+                    port,
+                    "secret",
+                    &move |event, v| {
+                        let v = if event == "control-command" { v } else { serde_json::json!({ "event": event, "body": v }) };
+                        sink.lock().unwrap().push(v)
+                    },
+                    &snap,
+                    &listeners,
+                );
             }
         });
-        (port, got)
+        (port, got, subs)
     }
 
     fn request(port: u16, method: &str, path: &str, host: &str, auth: Option<&str>, body: &str) -> String {
@@ -217,7 +286,7 @@ mod tests {
 
     #[test]
     fn serves_state_and_accepts_commands_with_the_token() {
-        let (port, got) = serve(r#"{"v":1}"#);
+        let (port, got, _) = serve(r#"{"v":1}"#);
         let host = format!("127.0.0.1:{port}");
 
         let state = request(port, "GET", "/state", &host, Some("secret"), "");
@@ -231,7 +300,7 @@ mod tests {
 
     #[test]
     fn refuses_a_missing_or_wrong_token_and_foreign_hosts() {
-        let (port, got) = serve("{}");
+        let (port, got, _) = serve("{}");
         let host = format!("127.0.0.1:{port}");
         assert!(request(port, "GET", "/state", &host, None, "").starts_with("HTTP/1.1 401"));
         assert!(request(port, "GET", "/state", &host, Some("nope"), "").starts_with("HTTP/1.1 401"));
@@ -243,7 +312,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_commands() {
-        let (port, got) = serve("{}");
+        let (port, got, _) = serve("{}");
         let host = format!("127.0.0.1:{port}");
         assert!(request(port, "POST", "/command", &host, Some("secret"), "[1]").starts_with("HTTP/1.1 400"));
         assert!(request(port, "POST", "/command", &host, Some("secret"), "not json").starts_with("HTTP/1.1 400"));
@@ -251,6 +320,63 @@ mod tests {
         assert!(request(port, "POST", "/command", &host, Some("secret"), &big).starts_with("HTTP/1.1 413"));
         assert!(request(port, "GET", "/nothing", &host, Some("secret"), "").starts_with("HTTP/1.1 404"));
         assert!(got.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn base64_matches_the_standard_vectors() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xff, 0xfe, 0xfd, 0xfc]), "//79/A==");
+    }
+
+    #[test]
+    fn a_deck_report_becomes_its_own_event() {
+        let (port, got, _) = serve("{}");
+        let host = format!("127.0.0.1:{port}");
+        let r = request(port, "POST", "/decks", &host, Some("secret"), r#"{"decks":[{"id":"d1"}]}"#);
+        assert!(r.starts_with("HTTP/1.1 202"), "{r}");
+        let events = got.lock().unwrap();
+        assert_eq!(events[0]["event"], "decks-report");
+        assert_eq!(events[0]["body"]["decks"][0]["id"], "d1");
+    }
+
+    #[test]
+    fn listeners_get_frames_and_are_dropped_when_they_leave() {
+        let (port, _, subs) = serve("{}");
+        let host = format!("127.0.0.1:{port}");
+        // without the token there is no stream
+        assert!(request(port, "GET", "/frames", &host, None, "").starts_with("HTTP/1.1 401"));
+
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(c, "GET /frames HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer secret\r\n\r\n").unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut head = [0u8; 256];
+        let n = c.read(&mut head).unwrap();
+        let head = String::from_utf8_lossy(&head[..n]).to_string();
+        assert!(head.contains("text/event-stream"), "{head}");
+        // the server registers the listener just after answering
+        for _ in 0..50 {
+            if !subs.0.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        publish_frame(&subs, serde_json::json!({ "deck": "d1", "g": 1 }), &[1, 2, 3]);
+        let mut buf = [0u8; 256];
+        let n = c.read(&mut buf).unwrap();
+        let text = String::from_utf8_lossy(&buf[..n]).to_string();
+        assert!(text.contains(r#""deck":"d1""#) && text.contains(r#""b64":"AQID""#), "{text}");
+
+        drop(c);
+        for _ in 0..5 {
+            publish_frame(&subs, serde_json::json!({}), &[0; 4096]);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(subs.0.lock().unwrap().is_empty(), "a listener that left was kept");
     }
 
     #[cfg(windows)]

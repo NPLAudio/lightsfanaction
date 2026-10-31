@@ -1,3 +1,4 @@
+import { deckDevices, useDecks, type DeckReport } from './lib/deckState'
 import { EFFECTS } from './lib/effects'
 import { IS_TAURI, invoke } from './lib/hybrid'
 import type { FanMode } from './lib/types'
@@ -113,16 +114,69 @@ export function runCommand(c: Record<string, unknown>) {
   }
 }
 
+/** Checks a deck report from the plugin: sizes and keys must be sane, so a bad report cannot create a huge device. */
+export function parseDecks(payload: unknown): DeckReport[] {
+  const list = (payload as { decks?: unknown } | null)?.decks
+  if (!Array.isArray(list)) return []
+  const int = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : undefined)
+  const out: DeckReport[] = []
+  for (const d of list.slice(0, 8)) {
+    const columns = int(d?.columns, 1, 16)
+    const rows = int(d?.rows, 1, 8)
+    if (typeof d?.id !== 'string' || !d.id || d.id.length > 80 || columns === undefined || rows === undefined) continue
+    const seen = new Set<string>()
+    const keys: DeckReport['keys'] = []
+    for (const k of Array.isArray(d.keys) ? d.keys.slice(0, columns * rows) : []) {
+      const column = int(k?.column, 0, columns - 1)
+      const row = int(k?.row, 0, rows - 1)
+      if (column === undefined || row === undefined || seen.has(column + ',' + row)) continue
+      seen.add(column + ',' + row)
+      keys.push({ column, row })
+    }
+    out.push({ id: d.id, name: typeof d.name === 'string' && d.name ? d.name.slice(0, 60) : 'Stream Deck', columns, rows, keys })
+  }
+  return out
+}
+
+/** Brings the Stream Deck devices in the lighting list in line with the decks and settings. */
+function syncDecks() {
+  const { decks, settings } = useDecks.getState()
+  useStore.getState().syncDecks(deckDevices(decks, settings))
+}
+
+const sameDecks = (a: DeckReport[], b: DeckReport[]) => JSON.stringify(a) === JSON.stringify(b)
+/** The plugin reports about every 5 seconds; this long without one and its decks are gone. */
+const DECKS_STALE_MS = 20000
+
 let started = false
 export function startControl() {
-  if (started || !IS_TAURI) return
+  if (started) return
   started = true
+  // device list follows the decks and their settings
+  let last = ''
+  useDecks.subscribe((s) => {
+    const key = JSON.stringify([s.decks, s.settings])
+    if (key !== last) {
+      last = key
+      syncDecks()
+    }
+  })
+  if (!IS_TAURI) return
   setInterval(() => {
     if (useStore.getState().ready) void invoke('control_publish', { json: JSON.stringify(snapshot()) }).catch(() => undefined)
   }, PUBLISH_MS)
-  void import('@tauri-apps/api/event').then(({ listen }) =>
-    listen<Record<string, unknown>>('control-command', (e) => {
+  void import('@tauri-apps/api/event').then(({ listen }) => {
+    void listen<Record<string, unknown>>('control-command', (e) => {
       if (e.payload && typeof e.payload === 'object') runCommand(e.payload)
-    }),
-  )
+    })
+    void listen<unknown>('decks-report', (e) => {
+      const next = parseDecks(e.payload)
+      const prev = useDecks.getState().decks
+      useDecks.getState().setDecks(sameDecks(prev, next) ? prev : next) // a repeat report only refreshes the clock
+    })
+  })
+  setInterval(() => {
+    const { decks, seenAt, setDecks } = useDecks.getState()
+    if (decks.length && performance.now() - seenAt > DECKS_STALE_MS) setDecks([])
+  }, 5000)
 }
