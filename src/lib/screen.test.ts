@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { runCommand, snapshot } from '../control'
 import { effectsFor } from './effects'
-import { SCREEN_ID, screenTheme } from './screen'
+import { SCREEN_ID, holdsScreen, screenMode, screenTheme } from './screen'
 import { useStore } from '../store'
 import type { Assignment, Device } from './types'
 
@@ -26,7 +26,7 @@ describe('the cooler screen theme', () => {
   })
 
   it('offers its own choices only to the screen', () => {
-    expect(effectsFor('screen').slice(0, 2).map((e) => e.id)).toEqual(['stats', 'match'])
+    expect(effectsFor('screen').slice(0, 4).map((e) => e.id)).toEqual(['stats', 'match', 'picture', 'builtin'])
     expect(effectsFor('strip').some((e) => e.screenOnly)).toBe(false)
     expect(effectsFor('screen').some((e) => e.id === 'rainbow')).toBe(true)
   })
@@ -60,5 +60,27 @@ describe('screen-only choices never reach the lights', () => {
     runCommand({ cmd: 'effect', device: 'all', effect: 'stats' })
     expect(useStore.getState().assignments.k.effectId).toBe('rainbow')
     expect(snapshot().effects.some((e) => e.id === 'stats' || e.id === 'match')).toBe(false)
+  })
+})
+
+describe('what the cooler screen is doing', () => {
+  const devices = [lights, screen]
+  const mode = (effectId: string) => screenMode(devices, { k: as('rainbow'), [SCREEN_ID]: as(effectId) })
+
+  it('is live for stats and effects, and paused for a held picture or the cooler\'s own screen', () => {
+    expect(mode('stats')).toBe('stats')
+    expect(mode('aurora')).toBe('theme')
+    expect(mode('picture')).toBe('picture')
+    expect(mode('builtin')).toBe('builtin')
+    expect(holdsScreen(mode('picture'))).toBe(true)
+    expect(holdsScreen(mode('builtin'))).toBe(true)
+    expect(holdsScreen(mode('aurora'))).toBe(false)
+    expect(holdsScreen(mode('stats'))).toBe(false)
+  })
+
+  it('has no mode without a cooler screen, and a held mode never counts as a theme', () => {
+    expect(screenMode([lights], { k: as('rainbow') })).toBeNull()
+    expect(screenTheme(devices, { k: as('rainbow'), [SCREEN_ID]: as('picture') })).toBeNull()
+    expect(screenTheme(devices, { k: as('rainbow'), [SCREEN_ID]: as('builtin') })).toBeNull()
   })
 })

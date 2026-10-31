@@ -6,14 +6,13 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { DeviceCanvas } from '@/components/LedCanvas'
 import { Disclosure } from '@/components/Disclosure'
-import { AudioStatusLine } from '@/components/AudioStatusLine'
-import { SliderField } from '@/components/Field'
+import { EffectCard, EffectOptions } from '@/components/EffectControls'
+import { ScreenPane } from '@/components/ScreenPane'
 import { backend } from '@/lib/backend'
-import { effectById, effectsFor } from '@/lib/effects'
+import { effectById } from '@/lib/effects'
 import type { Device } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store'
@@ -93,7 +92,7 @@ function ZoneSizes({ dev }: { dev: Device }) {
 
 export function LightingPage() {
   const { devices, assignments, selectedDevice, syncAll } = useStore()
-  const { selectDevice, setSyncAll, setEffect, setParam, setBrightness } = useStore()
+  const { selectDevice, setSyncAll } = useStore()
   const dev = devices.find((d) => d.id === selectedDevice)
   const a = dev && assignments[dev.id]
 
@@ -111,7 +110,6 @@ export function LightingPage() {
     )
   }
 
-  const fx = effectById(a.effectId)
   const big = previewSize(dev, true)
 
   return (
@@ -159,6 +157,10 @@ export function LightingPage() {
 
       <ScrollArea className="min-h-0">
         <div className="mx-auto max-w-3xl space-y-4 p-6">
+          {dev.kind === 'screen' ? (
+            <ScreenPane dev={dev} a={a} />
+          ) : (
+            <>
           <div>
             <h1 className="text-xl font-semibold">{dev.name}</h1>
             <p className="text-sm text-muted-foreground">
@@ -173,68 +175,13 @@ export function LightingPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="space-y-5">
-              <div className="space-y-2">
-                <Label>Effect</Label>
-                <Select
-                  value={a.effectId}
-                  onValueChange={(v) => v && setEffect(dev.id, v)}
-                  items={effectsFor(dev.kind).map((e) => ({ value: e.id, label: e.name }))}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {effectsFor(dev.kind).map((e) => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {e.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-sm text-muted-foreground">{fx.description}</p>
-                {fx.reactive && <AudioStatusLine />}
-              </div>
-              <SliderField label="Brightness" value={a.brightness} min={0} max={100} unit="%" onChange={(v) => setBrightness(dev.id, v)} />
-            </CardContent>
-          </Card>
+          <EffectCard dev={dev} a={a} />
 
-          {fx.params.length > 0 && (
-            <Disclosure
-              key={`${dev.id}-${fx.id}`}
-              title="Effect options"
-              summary={fx.params.map((p) => p.label).join(' · ')}
-              defaultOpen={fx.params.length <= 2}
-            >
-              {fx.params.map((p) =>
-                p.type === 'color' ? (
-                  <div key={p.key} className="flex items-center gap-3">
-                    <Label htmlFor={`p-${p.key}`} className="flex-1 text-sm">{p.label}</Label>
-                    <input
-                      id={`p-${p.key}`}
-                      type="color"
-                      value={String(a.params[p.key])}
-                      onChange={(e) => setParam(dev.id, p.key, e.target.value)}
-                      className="h-8 w-12 cursor-pointer rounded-md border bg-transparent p-0.5"
-                    />
-                  </div>
-                ) : (
-                  <SliderField
-                    key={p.key}
-                    label={p.label}
-                    value={Number(a.params[p.key])}
-                    min={p.min ?? 0}
-                    max={p.max ?? 100}
-                    step={p.step}
-                    onChange={(v) => setParam(dev.id, p.key, v)}
-                  />
-                ),
-              )}
-            </Disclosure>
-          )}
+          <EffectOptions dev={dev} a={a} />
 
           <ZoneSizes key={dev.id} dev={dev} />
+            </>
+          )}
         </div>
       </ScrollArea>
     </div>

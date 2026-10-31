@@ -1,6 +1,7 @@
 import { IS_TAURI, invoke } from './lib/hybrid'
 import { LCD_SIZE, drawLive, rgba } from './lib/lcd'
 import { drawThemed, resolveTheme } from './lib/lcdTheme'
+import { holdsScreen, screenMode } from './lib/screen'
 import type { Sensor } from './lib/types'
 import { simulatorActive } from './settings'
 import { useStore } from './store'
@@ -24,7 +25,8 @@ const EASE_SECONDS = 0.5
 /**
  * Keeps the cooler's screen showing the temperatures, always: plain stats, or the theme chosen for the screen
  * device in the lighting list. Frames go through the fast streaming path, so the gauge glides and themes animate.
- * Nothing is sent while the picture is unchanged. Only a held picture (or the cooler's own screen) pauses it.
+ * Nothing is sent while the picture is unchanged. Only a held picture (or the cooler's own screen), chosen as the
+ * screen's effect in the lighting list, pauses it.
  */
 export function startLcdLoop() {
   if (!IS_TAURI) return
@@ -39,8 +41,8 @@ export function startLcdLoop() {
   let lastAt = performance.now()
 
   useStore.subscribe((s, prev) => {
-    // coming back from a held picture: show the live screen right away
-    if (!s.lcdStatic && prev.lcdStatic) last = null
+    // coming back from a held picture or the built-in screen: show the live screen right away
+    if (!holdsScreen(screenMode(s.devices, s.assignments)) && holdsScreen(screenMode(prev.devices, prev.assignments))) last = null
   })
 
   /** Readings eased toward their real values. */
@@ -57,7 +59,8 @@ export function startLcdLoop() {
   setInterval(async () => {
     const s = useStore.getState()
     // no cooler screen, a simulator, a held picture, or a recent failure: nothing to do
-    if (busy || s.lcdStatic || simulatorActive(IS_TAURI) || !s.devices.some((d) => d.kind === 'screen')) return
+    const mode = screenMode(s.devices, s.assignments)
+    if (busy || mode === null || holdsScreen(mode) || simulatorActive(IS_TAURI)) return
     const now = performance.now()
     if (now < retryAt) return
     const dt = Math.min(1, (now - lastAt) / 1000)

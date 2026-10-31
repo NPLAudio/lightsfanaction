@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FanIcon, LightbulbIcon, MonitorIcon, SettingsIcon } from 'lucide-react'
+import { FanIcon, LightbulbIcon, SettingsIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -11,11 +11,10 @@ import { backend } from '@/lib/backend'
 import { IS_TAURI } from '@/lib/hybrid'
 import { FansPage } from '@/pages/FansPage'
 import { LightingPage } from '@/pages/LightingPage'
-import { ScreenPage } from '@/pages/ScreenPage'
 import { useSettings } from '@/settings'
 import { useStore } from '@/store'
 
-type Page = 'lighting' | 'fans' | 'screen'
+type Page = 'lighting' | 'fans'
 
 /** Brings fan control in line with the settings: on by default, off hands everything back to firmware. */
 async function syncHardware() {
@@ -77,7 +76,6 @@ export default function App() {
           <TabsList>
             <TabsTrigger value="lighting"><LightbulbIcon /> Lighting</TabsTrigger>
             <TabsTrigger value="fans"><FanIcon /> Fans</TabsTrigger>
-            <TabsTrigger value="screen"><MonitorIcon /> Screen</TabsTrigger>
           </TabsList>
         </Tabs>
         <div className="flex-1" />
@@ -92,10 +90,8 @@ export default function App() {
           <p className="p-6 text-sm text-muted-foreground">Looking for devices…</p>
         ) : page === 'lighting' ? (
           <LightingPage />
-        ) : page === 'fans' ? (
-          <FansPage onOpenSettings={() => setSettingsOpen(true)} />
         ) : (
-          <ScreenPage />
+          <FansPage onOpenSettings={() => setSettingsOpen(true)} />
         )}
       </main>
 

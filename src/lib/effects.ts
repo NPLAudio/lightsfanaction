@@ -309,6 +309,22 @@ const SCREEN_CHOICES: Effect[] = [
     params: [],
     render: () => [0, 0, 0],
   },
+  {
+    id: 'picture',
+    name: 'Picture',
+    description: 'Holds a picture of your own on the screen. It is stored in the cooler, so it stays through restarts.',
+    screenOnly: true,
+    params: [],
+    render: () => [34, 38, 58],
+  },
+  {
+    id: 'builtin',
+    name: "Cooler's own screen",
+    description: "Hands the screen back to the cooler's built-in display of the liquid temperature.",
+    screenOnly: true,
+    params: [],
+    render: () => [34, 38, 58],
+  },
 ]
 
 EFFECTS.push(...SCREEN_CHOICES)

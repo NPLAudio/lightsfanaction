@@ -30,8 +30,6 @@ interface State {
   /** Every fan reading, including fans left to their firmware (which have no `live` entry). */
   rawFans: HardwareState['fans']
   calibrations: Record<string, FanCalibration>
-  /** A picture (or the cooler's own screen) is being held, so the live screen is paused. The screen is otherwise always live. */
-  lcdStatic: boolean
   lcdError: string | null
 
   init(): Promise<void>
@@ -48,8 +46,6 @@ interface State {
   setCurve(id: string, curve: CurvePoint[]): void
   setLive(sensors: Sensor[], live: Record<string, FanLive>, rawFans?: HardwareState['fans']): void
   setCalibration(id: string, cal: FanCalibration | null): void
-  setLcdStatic(on: boolean): void
-  setLcdStatic(on: boolean): void
   setLcdError(e: string | null): void
 }
 
@@ -99,7 +95,6 @@ export const useStore = create<State>()(
       live: {},
       rawFans: [],
       calibrations: {},
-      lcdStatic: false,
       lcdError: null,
 
       async init() {
@@ -179,7 +174,6 @@ export const useStore = create<State>()(
         else delete next[id]
         set({ calibrations: next })
       },
-      setLcdStatic: (lcdStatic) => set({ lcdStatic }),
       setLcdError: (lcdError) => set({ lcdError }),
     }),
     {
@@ -191,7 +185,6 @@ export const useStore = create<State>()(
         fans: s.fans,
         calibrations: s.calibrations,
         selectedFan: s.selectedFan,
-        lcdStatic: s.lcdStatic,
       }),
     },
   ),
