@@ -1,6 +1,7 @@
 import type { Assignment, Backend, Device, DeviceKind, FanInfo, HardwareState, RGB, Sensor } from './types'
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { hwEffectFor } from './hwEffects'
+import { SCREEN_ID } from './screen'
 import { Q6_ANSI_POSITIONS } from './keychronQ6'
 import { SimBackend } from './sim'
 import { simulatorActive, useSettings } from '../settings'
@@ -129,8 +130,30 @@ export class HybridBackend implements Backend {
     const rgbKept = rgb.filter((d) => !perKey.some((v) => same(v.name, d.name)))
     const viaKept = via.filter((v) => v.layout === 'custom' || !rgbKept.some((d) => same(v.name, d.name)))
 
-    const all = [...rgbKept, ...viaKept]
-    return all.length || !this.simActive ? all : this.sim.listDevices()
+    const lights = [...rgbKept, ...viaKept]
+    const screen = await this.listScreen()
+    return lights.length || !this.simActive ? [...lights, ...screen] : [...(await this.sim.listDevices()), ...screen]
+  }
+
+  /** The cooler's screen, offered as a device so what it shows is chosen in the lighting list like any effect. */
+  private async listScreen(): Promise<Device[]> {
+    if (IS_TAURI && !this.simActive) {
+      try {
+        await invoke('kraken_info')
+      } catch {
+        return [] // no cooler screen reachable
+      }
+    }
+    return [
+      {
+        id: SCREEN_ID,
+        name: 'Kraken display',
+        kind: 'screen',
+        layout: 'ring',
+        ledCount: 36,
+        note: "The cooler's screen. Choose stats only, or an effect with the temperatures built into it.",
+      },
+    ]
   }
 
   private viaPaths = new Map<string, string>()
@@ -302,6 +325,7 @@ export class HybridBackend implements Backend {
   }
 
   setLeds(id: string, colors: RGB[]) {
+    if (id === SCREEN_ID) return // drawn by the screen loop, not sent as lights
     if (this.krakenDirect.has(id)) {
       this.krakenFrames.set(id, colors)
       return

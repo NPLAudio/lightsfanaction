@@ -1,6 +1,6 @@
 export type RGB = [number, number, number]
 
-export type DeviceKind = 'keyboard' | 'fan' | 'gpu' | 'ram' | 'strip' | 'mouse'
+export type DeviceKind = 'keyboard' | 'fan' | 'gpu' | 'ram' | 'strip' | 'mouse' | 'screen'
 export type Layout = 'strip' | 'ring' | 'grid' | 'custom'
 
 export interface Zone {
@@ -48,6 +48,8 @@ export interface ParamDef {
 }
 
 export interface Effect {
+  /** only meaningful for a cooler screen (stats only, match the lights); never offered for lights */
+  screenOnly?: boolean
   /** follows the music; needs the audio listener running */
   reactive?: boolean
   id: string

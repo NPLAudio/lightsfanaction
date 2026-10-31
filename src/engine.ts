@@ -5,6 +5,7 @@ import { simulateAudio, tickAudio } from './lib/audio'
 import { setAudioActive } from './lib/audioLink'
 import { effectById } from './lib/effects'
 import { ledsFor } from './lib/layout'
+import { screenTheme } from './lib/screen'
 import type { FanLive, RGB } from './lib/types'
 import { kindEnabled, simulatorActive, useSettings } from './settings'
 import { useStore } from './store'
@@ -23,14 +24,19 @@ function renderFrames() {
   const { devices, assignments } = useStore.getState()
   const t = performance.now() / 1000
   // listen to the PC's audio only while some device is using a sound-reactive effect
-  const reactive = devices.some((d) => effectById(assignments[d.id]?.effectId ?? '').reactive)
+  const worn = screenTheme(devices, assignments)
+  const reactive =
+    devices.some((d) => d.kind !== 'screen' && effectById(assignments[d.id]?.effectId ?? '').reactive) ||
+    (worn !== null && effectById(worn.effectId).reactive === true)
   if (reactive && simulatorActive(IS_TAURI)) simulateAudio(t)
   setAudioActive(reactive && !simulatorActive(IS_TAURI))
   tickAudio(t, Math.min(0.2, t - lastFrameAt))
   lastFrameAt = t
   for (const d of devices) {
-    const a = assignments[d.id]
-    if (!a) continue
+    const own = assignments[d.id]
+    if (!own) continue
+    // the screen previews the theme it is wearing ("match" takes the cooler's lights)
+    const a = d.kind === 'screen' ? (worn ?? own) : own
     const fx = effectById(a.effectId)
     const k = a.brightness / 100
     const out = ledsFor(d).map((led): RGB => {
@@ -38,7 +44,7 @@ function renderFrames() {
       return [Math.round(c[0] * k), Math.round(c[1] * k), Math.round(c[2] * k)]
     })
     frames.set(d.id, out)
-    backend.syncEffect(d.id, a)
+    backend.syncEffect(d.id, own)
     backend.setLeds(d.id, out)
   }
 }

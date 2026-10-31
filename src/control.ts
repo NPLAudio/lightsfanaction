@@ -52,7 +52,7 @@ export function snapshot(): Snapshot {
       effectId: assignments[d.id]?.effectId ?? '',
       brightness: assignments[d.id]?.brightness ?? 100,
     })),
-    effects: EFFECTS.map((e) => ({ id: e.id, name: e.name })),
+    effects: EFFECTS.filter((e) => !e.screenOnly).map((e) => ({ id: e.id, name: e.name })),
   }
 }
 
@@ -81,7 +81,7 @@ export function runCommand(c: Record<string, unknown>) {
   const store = useStore.getState()
   switch (c.cmd) {
     case 'effect': {
-      if (typeof c.effect !== 'string' || !EFFECTS.some((e) => e.id === c.effect)) return
+      if (typeof c.effect !== 'string' || !EFFECTS.some((e) => e.id === c.effect && !e.screenOnly)) return
       store.setEffectFor(targetDevices(c.device), c.effect)
       return
     }

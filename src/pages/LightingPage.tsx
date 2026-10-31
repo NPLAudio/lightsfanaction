@@ -13,7 +13,7 @@ import { Disclosure } from '@/components/Disclosure'
 import { AudioStatusLine } from '@/components/AudioStatusLine'
 import { SliderField } from '@/components/Field'
 import { backend } from '@/lib/backend'
-import { EFFECTS, effectById } from '@/lib/effects'
+import { effectById, effectsFor } from '@/lib/effects'
 import type { Device } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store'
@@ -25,6 +25,7 @@ const ICON: Record<Device['kind'], typeof KeyboardIcon> = {
   ram: MemoryStickIcon,
   strip: LightbulbIcon,
   mouse: MousePointerIcon,
+  screen: MonitorIcon,
 }
 
 function previewSize(d: Device, big: boolean) {
@@ -179,13 +180,13 @@ export function LightingPage() {
                 <Select
                   value={a.effectId}
                   onValueChange={(v) => v && setEffect(dev.id, v)}
-                  items={EFFECTS.map((e) => ({ value: e.id, label: e.name }))}
+                  items={effectsFor(dev.kind).map((e) => ({ value: e.id, label: e.name }))}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {EFFECTS.map((e) => (
+                    {effectsFor(dev.kind).map((e) => (
                       <SelectItem key={e.id} value={e.id}>
                         {e.name}
                       </SelectItem>

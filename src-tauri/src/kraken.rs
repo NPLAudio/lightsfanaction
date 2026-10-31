@@ -237,4 +237,100 @@ mod tests {
         assert_eq!(lights_packet(2, &[], FAN_LEDS).len(), 4 + FAN_LEDS * 3);
         assert_eq!(&lights_packet(2, &[], FAN_LEDS)[..4], &[0x26, 0x14, 2, 2]);
     }
+
+    #[test]
+    fn rgb565_conversion_hits_the_extremes_and_ignores_the_fourth_byte() {
+        assert_eq!(to_rgb565(&[255, 255, 255, 7, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0]), vec![0xFFFF, 0x0000, 0xF800, 0x07E0, 0x001F]);
+    }
+}
+
+/// Converts R, G, B, ignored 8-bit pixels to RGB565 with rounding.
+pub fn to_rgb565(rgbx: &[u8]) -> Vec<u16> {
+    rgbx.chunks_exact(4)
+        .map(|p| {
+            let r = (p[0] as u32 * 249 + 1014) >> 11;
+            let g = (p[1] as u32 * 253 + 505) >> 10;
+            let b = (p[2] as u32 * 249 + 1014) >> 11;
+            ((r << 11) | (g << 5) | b) as u16
+        })
+        .collect()
+}
+
+/// Streams frames to the screen the way the Elite's own "fast memory" path takes them: each frame is
+/// Q565-compressed (a small RGB565 format) and sent with no bucket bookkeeping. The USB interface and HID
+/// handle stay open between frames, so a frame costs one encode and one bulk transfer.
+pub struct LcdStream {
+    k: Kraken,
+    ep: nusb::Endpoint<nusb::transfer::Bulk, nusb::transfer::Out>,
+    _iface: nusb::Interface,
+    encoded: Vec<u8>,
+    /// false until the first frame has gone out; see `frame`
+    warm: bool,
+}
+
+impl LcdStream {
+    pub fn open() -> Result<Self, String> {
+        let k = Kraken::open()?;
+        let dev = nusb::list_devices()
+            .wait()
+            .map_err(|e| format!("usb list: {e}"))?
+            .find(|d| d.vendor_id() == VID && d.product_id() == PID)
+            .ok_or("Kraken not found on USB")?;
+        let device = dev.open().wait().map_err(|e| format!("usb open: {e}"))?;
+        let iface = device
+            .claim_interface(0)
+            .wait()
+            .map_err(|e| format!("cannot claim the Kraken's image interface (is NZXT CAM running?): {e}"))?;
+        let ep = iface
+            .endpoint::<nusb::transfer::Bulk, nusb::transfer::Out>(BULK_OUT)
+            .map_err(|e| format!("bulk endpoint: {e}"))?;
+        // same preparation the vendor software does, then show the "bucket" screen the frames land in
+        k.write_read(&[0x36, 0x03])?;
+        k.switch_bucket(0, 4)?;
+        Ok(LcdStream { k, ep, _iface: iface, encoded: Vec::with_capacity(256 * 1024), warm: false })
+    }
+
+    /// Shows one 640x640 frame (`pixels` is RGB565, row-major).
+    pub fn frame(&mut self, pixels: &[u16]) -> Result<(), String> {
+        if pixels.len() != SIZE * SIZE {
+            return Err(format!("frame must be {SIZE}x{SIZE}"));
+        }
+        self.encoded.clear();
+        if !q565::encode::Q565EncodeContext::encode_to_vec(SIZE as u16, SIZE as u16, pixels, &mut self.encoded) {
+            return Err("could not compress the frame".into());
+        }
+        self.send_encoded()?;
+        if !self.warm {
+            // The first frame after the stream opens is sometimes lost while the screen is still switching to it
+            // (seen on a 2024 Elite), and a picture that never changes would then never be resent. Sending it
+            // twice, a moment apart, makes the first one reliable.
+            std::thread::sleep(Duration::from_millis(150));
+            self.send_encoded()?;
+            self.warm = true;
+        }
+        Ok(())
+    }
+
+    /// Sends the frame in `self.encoded`: start, header, payload, end.
+    fn send_encoded(&mut self) -> Result<(), String> {
+        self.k.request(&[0x36, 0x01, 0x00, 0x01, 0x08], &[0x37, 0x01])?;
+        let mut header = vec![0x12, 0xFA, 0x01, 0xE8, 0xAB, 0xCD, 0xEF, 0x98, 0x76, 0x54, 0x32, 0x10];
+        header.extend_from_slice(&[0x08, 0, 0, 0]);
+        header.extend_from_slice(&(self.encoded.len() as u32).to_le_bytes());
+        let mut send = |bytes: Vec<u8>| {
+            self.ep
+                .transfer_blocking(bytes.into(), Duration::from_secs(5))
+                .status
+                .map_err(|e| format!("frame upload failed: {e}"))
+        };
+        send(header)?;
+        send(self.encoded.clone())?;
+        self.k.request(&[0x36, 0x02], &[0x37, 0x02])?;
+        Ok(())
+    }
+
+    /// Back to the cooler's own liquid temperature screen.
+    pub fn finish(&self) -> Result<(), String> {
+        self.k.show_liquid()
+    }
 }

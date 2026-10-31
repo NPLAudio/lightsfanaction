@@ -6,13 +6,15 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Disclosure } from '@/components/Disclosure'
-import { SwitchField } from '@/components/Field'
 import { IS_TAURI, invoke } from '@/lib/hybrid'
+import { effectById, effectsFor } from '@/lib/effects'
 import { LCD_SIZE, drawImage, drawLive, rgba, type Fit } from '@/lib/lcd'
+import { drawThemed, resolveTheme } from '@/lib/lcdTheme'
 import { sendToKraken } from '@/lcdLive'
 import { useStore } from '@/store'
 
@@ -20,12 +22,13 @@ type Mode = 'live' | 'image'
 
 export function ScreenPage() {
   const sensors = useStore((s) => s.sensors)
-  const live = useStore((s) => s.lcdLive)
   const liveError = useStore((s) => s.lcdError)
-  const setLive = useStore((s) => s.setLcdLive)
+  const held = useStore((s) => s.lcdStatic)
+  const screen = useStore((s) => s.devices.find((d) => d.kind === 'screen'))
+  const screenEffect = useStore((s) => (screen ? s.assignments[screen.id]?.effectId : undefined))
   const canvas = useRef<HTMLCanvasElement>(null)
   const sensorsRef = useRef(sensors)
-  const [mode, setMode] = useState<Mode>('live')
+  const [mode, setMode] = useState<Mode>(held ? 'image' : 'live')
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   const [fit, setFit] = useState<Fit>('cover')
   const [brightness, setBrightness] = useState(80)
@@ -44,13 +47,17 @@ export function ScreenPage() {
     else if (mode === 'image') {
       ctx.fillStyle = '#10111a'
       ctx.fillRect(0, 0, LCD_SIZE, LCD_SIZE)
-    } else drawLive(ctx, sensorsRef.current)
+    } else {
+      const theme = resolveTheme()
+      if (theme) drawThemed(ctx, sensorsRef.current, theme, performance.now() / 1000)
+      else drawLive(ctx, sensorsRef.current)
+    }
   }, [mode, img, fit])
 
   useEffect(() => {
     render()
-    if (mode !== 'live') return
-    const t = setInterval(render, 1000)
+    if (mode === 'image') return
+    const t = setInterval(render, 100)
     return () => clearInterval(t)
   }, [render, mode])
 
@@ -79,7 +86,7 @@ export function ScreenPage() {
 
   const send = () => {
     render()
-    if (mode === 'image') setLive(false) // the live loop would overwrite a picture
+    useStore.getState().setLcdStatic(true) // the live screen would overwrite a picture
     void run('Sent to the cooler', () => sendToKraken(rgba(canvas.current!)))
   }
 
@@ -111,12 +118,19 @@ export function ScreenPage() {
         <div className="space-y-4">
           <div>
             <h1 className="text-xl font-semibold">Cooler screen</h1>
-            <p className="text-sm text-muted-foreground">Live temperatures or a picture on the pump display.</p>
+            <p className="text-sm text-muted-foreground">Live temperatures, themed to match your lighting if you like, or a picture on the pump display.</p>
           </div>
 
-          <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)}>
+          <Tabs
+            value={mode}
+            onValueChange={(v) => {
+              setMode(v as Mode)
+              // coming back to the live screen resumes it; a picture only takes over once it is sent
+              if (v === 'live') useStore.getState().setLcdStatic(false)
+            }}
+          >
             <TabsList>
-              <TabsTrigger value="live">Live temperatures</TabsTrigger>
+              <TabsTrigger value="live">Live</TabsTrigger>
               <TabsTrigger value="image">Picture</TabsTrigger>
             </TabsList>
           </Tabs>
@@ -125,15 +139,35 @@ export function ScreenPage() {
             <CardContent className="space-y-4">
               {mode === 'live' ? (
                 <>
-                  <SwitchField
-                    label="Keep the screen live"
-                    description="Updates whenever a reading changes, even with the window closed."
-                    checked={live}
-                    onChange={(v) => {
-                      setLive(v)
-                      useStore.getState().setLcdError(null)
-                    }}
-                  />
+                  <div className="space-y-2">
+                    <Label>Screen shows</Label>
+                    <Select
+                      value={screenEffect ?? 'stats'}
+                      onValueChange={(v) => v && screen && useStore.getState().setEffect(screen.id, v)}
+                      items={effectsFor('screen').map((e) => ({ value: e.id, label: e.name }))}
+                      disabled={!screen}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {effectsFor('screen').map((e) => (
+                          <SelectItem key={e.id} value={e.id}>
+                            {e.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      {effectById(screenEffect ?? 'stats').description} The screen is always live, even with the window
+                      closed. The same choice is in the lighting list under Kraken display, with its effect options.
+                    </p>
+                  </div>
+                  {held && (
+                    <p className="text-sm text-muted-foreground">
+                      The screen is showing a held picture or the built-in display. Switch to this tab to resume the live screen.
+                    </p>
+                  )}
                   {!realTemps && (
                     <p className="text-sm text-muted-foreground">No liquid temperature yet. Fan control must be on to read it.</p>
                   )}
@@ -170,14 +204,16 @@ export function ScreenPage() {
                 </>
               )}
               <div className="flex flex-wrap gap-2">
-                <Button disabled={busy || (mode === 'image' && !img)} onClick={send}>
-                  {busy ? 'Sending…' : mode === 'live' ? 'Update now' : 'Send to cooler'}
-                </Button>
+                {mode === 'image' && (
+                  <Button disabled={busy || !img} onClick={send}>
+                    {busy ? 'Sending…' : 'Send to cooler'}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   disabled={busy}
                   onClick={() => {
-                    setLive(false)
+                    useStore.getState().setLcdStatic(true)
                     void run('Back to the built-in screen', () => invoke('kraken_liquid'))
                   }}
                 >

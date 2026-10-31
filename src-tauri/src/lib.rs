@@ -119,6 +119,39 @@ async fn openrgb_resize_zone(state: State<'_, Rgb>, device: u32, zone: u32, coun
     client.resize_zone(device, zone, count)
 }
 
+/// The screen stream, kept open between frames. Image uploads and "back to liquid" take it down first,
+/// because both need the same USB interface.
+#[derive(Default)]
+struct LcdStreamState(Mutex<Option<kraken::LcdStream>>);
+
+/// Shows one 640x640 frame (raw body, 4 bytes per pixel, alpha ignored) through the fast streaming path.
+#[tauri::command]
+async fn kraken_stream_frame(state: State<'_, LcdStreamState>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected a raw image body".into());
+    };
+    let pixels = kraken::to_rgb565(bytes);
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if guard.is_none() {
+        *guard = Some(kraken::LcdStream::open()?);
+    }
+    let result = guard.as_mut().ok_or("the screen stream is not open")?.frame(&pixels);
+    if result.is_err() {
+        *guard = None;
+    }
+    result
+}
+
+/// Ends the stream and goes back to the cooler's own liquid temperature screen.
+#[tauri::command]
+async fn kraken_stream_stop(state: State<'_, LcdStreamState>) -> Result<(), String> {
+    let stream = state.0.lock().map_err(|e| e.to_string())?.take();
+    match stream {
+        Some(s) => s.finish(),
+        None => kraken::Kraken::open()?.show_liquid(),
+    }
+}
+
 #[tauri::command]
 async fn kraken_info() -> Result<kraken::LcdInfo, String> {
     kraken::Kraken::open()?.info()
@@ -131,13 +164,16 @@ async fn kraken_display(brightness: u8, orientation: u8) -> Result<(), String> {
 
 /// Back to the cooler's built-in liquid temperature screen.
 #[tauri::command]
-async fn kraken_liquid() -> Result<(), String> {
+async fn kraken_liquid(stream: State<'_, LcdStreamState>) -> Result<(), String> {
+    drop(stream.0.lock().map_err(|e| e.to_string())?.take());
     kraken::Kraken::open()?.show_liquid()
 }
 
 /// Body is the raw 640x640 image, 4 bytes per pixel (alpha ignored).
 #[tauri::command]
-async fn kraken_image(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+async fn kraken_image(stream: State<'_, LcdStreamState>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    // the stream holds the image interface; let go of it first
+    drop(stream.0.lock().map_err(|e| e.to_string())?.take());
     match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) => kraken::Kraken::open()?.show_image(bytes),
         _ => Err("expected a raw image body".into()),
@@ -350,6 +386,7 @@ pub fn run() {
         .manage(Hw::default())
         .manage(Keyboards::default())
         .manage(KrakenLights::default())
+        .manage(LcdStreamState::default())
         .manage(control::Snapshot::default())
         .manage(std::sync::Arc::new(audio::Control::default()))
         .invoke_handler(tauri::generate_handler![
@@ -363,6 +400,8 @@ pub fn run() {
             kraken_liquid,
             kraken_image,
             kraken_lights,
+            kraken_stream_frame,
+            kraken_stream_stop,
             via_list,
             via_color,
             via_leds,

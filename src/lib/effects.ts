@@ -290,3 +290,30 @@ export const effectById = (id: string) => EFFECTS.find((e) => e.id === id) ?? EF
 export function defaultParams(effectId: string): Record<string, ParamValue> {
   return Object.fromEntries(effectById(effectId).params.map((d) => [d.key, d.default]))
 }
+
+/** Choices that only make sense for a cooler screen, listed first there. */
+const SCREEN_CHOICES: Effect[] = [
+  {
+    id: 'stats',
+    name: 'Stats only',
+    description: 'Just the temperatures on a plain dark background, with no lighting theme.',
+    screenOnly: true,
+    params: [],
+    render: () => [52, 58, 84],
+  },
+  {
+    id: 'match',
+    name: 'Match cooler lighting',
+    description: "Wears whichever effect the Kraken's lights are using, with the temperatures built into it.",
+    screenOnly: true,
+    params: [],
+    render: () => [0, 0, 0],
+  },
+]
+
+EFFECTS.push(...SCREEN_CHOICES)
+
+/** Effects a device of this kind can be given: the screen also gets its own choices, first; lights never do. */
+export function effectsFor(kind: string): Effect[] {
+  return kind === 'screen' ? [...SCREEN_CHOICES, ...EFFECTS.filter((e) => !e.screenOnly)] : EFFECTS.filter((e) => !e.screenOnly)
+}

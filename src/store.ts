@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { backend } from './lib/backend'
 import { CURVE_PRESETS, PUMP_MIN_PCT } from './lib/curve'
-import { defaultParams } from './lib/effects'
+import { defaultParams, effectById } from './lib/effects'
 import type {
   Assignment,
   CurvePoint,
@@ -30,7 +30,8 @@ interface State {
   /** Every fan reading, including fans left to their firmware (which have no `live` entry). */
   rawFans: HardwareState['fans']
   calibrations: Record<string, FanCalibration>
-  lcdLive: boolean
+  /** A picture (or the cooler's own screen) is being held, so the live screen is paused. The screen is otherwise always live. */
+  lcdStatic: boolean
   lcdError: string | null
 
   init(): Promise<void>
@@ -47,7 +48,8 @@ interface State {
   setCurve(id: string, curve: CurvePoint[]): void
   setLive(sensors: Sensor[], live: Record<string, FanLive>, rawFans?: HardwareState['fans']): void
   setCalibration(id: string, cal: FanCalibration | null): void
-  setLcdLive(on: boolean): void
+  setLcdStatic(on: boolean): void
+  setLcdStatic(on: boolean): void
   setLcdError(e: string | null): void
 }
 
@@ -97,14 +99,14 @@ export const useStore = create<State>()(
       live: {},
       rawFans: [],
       calibrations: {},
-      lcdLive: false,
+      lcdStatic: false,
       lcdError: null,
 
       async init() {
         const [devices, fanInfo] = await Promise.all([backend.listDevices(), backend.listFans()])
         const { assignments, fans, selectedDevice, selectedFan } = get()
         const a = { ...assignments }
-        for (const d of devices) a[d.id] ??= newAssignment(d.kind === 'fan' ? 'spin' : 'rainbow')
+        for (const d of devices) a[d.id] ??= newAssignment(d.kind === 'fan' ? 'spin' : d.kind === 'screen' ? 'stats' : 'rainbow')
         const present = fanInfo.map((i) => {
           const saved = fans.find((x) => x.id === i.id)
           return saved ? migrateFan(saved, i) : defaultFan(i)
@@ -129,7 +131,9 @@ export const useStore = create<State>()(
       setEffect(deviceId, effectId) {
         const { devices, syncAll, assignments } = get()
         const a = { ...assignments }
-        for (const id of syncAll ? devices.map((d) => d.id) : [deviceId]) {
+        // "Stats only" and the like belong to the screen alone, even with sync all on
+        const ids = effectById(effectId).screenOnly || !syncAll ? [deviceId] : devices.map((d) => d.id)
+        for (const id of ids) {
           a[id] = { ...newAssignment(effectId), brightness: a[id]?.brightness ?? 100 }
         }
         set({ assignments: a })
@@ -137,6 +141,7 @@ export const useStore = create<State>()(
 
       setEffectFor(deviceIds, effectId) {
         const a = { ...get().assignments }
+        if (effectById(effectId).screenOnly) return
         for (const id of deviceIds) a[id] = { ...newAssignment(effectId), brightness: a[id]?.brightness ?? 100 }
         set({ assignments: a })
       },
@@ -174,7 +179,7 @@ export const useStore = create<State>()(
         else delete next[id]
         set({ calibrations: next })
       },
-      setLcdLive: (lcdLive) => set({ lcdLive }),
+      setLcdStatic: (lcdStatic) => set({ lcdStatic }),
       setLcdError: (lcdError) => set({ lcdError }),
     }),
     {
@@ -186,7 +191,7 @@ export const useStore = create<State>()(
         fans: s.fans,
         calibrations: s.calibrations,
         selectedFan: s.selectedFan,
-        lcdLive: s.lcdLive,
+        lcdStatic: s.lcdStatic,
       }),
     },
   ),
