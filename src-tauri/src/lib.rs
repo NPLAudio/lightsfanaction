@@ -1,3 +1,4 @@
+mod activity;
 mod audio;
 mod control;
 mod elevate;
@@ -62,6 +63,7 @@ struct Rgb(Mutex<Option<Client>>);
 async fn openrgb_connect(state: State<'_, Rgb>, addr: Option<String>) -> Result<Vec<DeviceInfo>, String> {
     let mut client = Client::connect(addr.as_deref().unwrap_or(DEFAULT_ADDR))?;
     let devices = client.devices()?;
+    activity::log(&format!("OpenRGB connected, {} devices", devices.len()));
     *state.0.lock().map_err(|e| e.to_string())? = Some(client);
     Ok(devices)
 }
@@ -77,6 +79,7 @@ async fn openrgb_update(state: State<'_, Rgb>, frames: Vec<(u32, Vec<u8>)>) -> R
     for (idx, rgb) in frames {
         let started = std::time::Instant::now();
         let result = client.set_leds(idx, &rgb);
+        activity::count(&format!("openrgb#{idx}"));
         if trace {
             trace_line(&format!("openrgb device {idx}: {} bytes, {} ms, {}", rgb.len(), started.elapsed().as_millis(), if result.is_ok() { "ok" } else { "ERROR" }));
         }
@@ -109,11 +112,13 @@ async fn openrgb_set_mode(
 #[tauri::command]
 async fn openrgb_disconnect(state: State<'_, Rgb>) -> Result<(), String> {
     *state.0.lock().map_err(|e| e.to_string())? = None;
+    activity::log("OpenRGB disconnected");
     Ok(())
 }
 
 #[tauri::command]
 async fn openrgb_resize_zone(state: State<'_, Rgb>, device: u32, zone: u32, count: u32) -> Result<(), String> {
+    activity::log(&format!("OpenRGB zone resize: device {device}, zone {zone}, {count} LEDs"));
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     let client = guard.as_mut().ok_or("OpenRGB is not connected")?;
     client.resize_zone(device, zone, count)
@@ -192,6 +197,7 @@ async fn kraken_lights(state: State<'_, KrakenLights>, rgb: Vec<u8>, ring: usize
     if guard.is_none() {
         *guard = Some(kraken::Kraken::open()?);
     }
+    activity::count("kraken");
     let colors: Vec<[u8; 3]> = rgb.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     let (ring_colors, fan_colors) = colors.split_at(ring.min(colors.len()));
     let result = guard
@@ -219,6 +225,7 @@ async fn via_color(state: State<'_, Keyboards>, path: String, r: u8, g: u8, b: u
     if !map.contains_key(&path) {
         map.insert(path.clone(), via::Via::open(&path)?);
     }
+    activity::count("keyboard");
     let result = map.get_mut(&path).unwrap().set_color(r, g, b);
     if result.is_err() {
         map.remove(&path);
@@ -233,6 +240,7 @@ async fn via_leds(state: State<'_, Keyboards>, path: String, rgb: Vec<u8>) -> Re
     if !map.contains_key(&path) {
         map.insert(path.clone(), via::Via::open(&path)?);
     }
+    activity::count("keyboard");
     let result = map.get_mut(&path).unwrap().set_leds(&rgb);
     if result.is_err() {
         map.remove(&path);
@@ -298,8 +306,10 @@ async fn hw_start(state: State<'_, Hw>, lhm_dir: Option<String>) -> Result<bool,
     if let Some(mut old) = state.0.lock().map_err(|e| e.to_string())?.take() {
         old.shutdown();
     }
+    activity::log("hardware monitor starting");
     let client = hw::Client::start(lhm_dir.as_deref())?;
     let elevated = client.elevated;
+    activity::log(&format!("hardware monitor started (elevated: {elevated})"));
     *state.0.lock().map_err(|e| e.to_string())? = Some(client);
     Ok(elevated)
 }
@@ -374,6 +384,7 @@ pub fn run() {
                 app.state::<control::Snapshot>().inner().clone(),
                 app.state::<control::Subscribers>().inner().clone(),
             );
+            activity::start();
             audio::start(app.handle().clone(), app.state::<std::sync::Arc<audio::Control>>().inner().clone());
             // launched at login with --minimized: stay in the tray until opened
             if !std::env::args().any(|a| a == "--minimized") {
@@ -418,6 +429,7 @@ pub fn run() {
             openrgb_disconnect,
             openrgb_resize_zone,
             openrgb_set_mode,
+            activity::activity_log,
             kraken_info,
             kraken_display,
             kraken_liquid,
@@ -446,6 +458,7 @@ pub fn run() {
         .expect("error while building Lights Fan Action")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                activity::log("app exiting");
                 control::stop();
                 if let Ok(mut m) = app.state::<Keyboards>().0.lock() {
                     for (_, k) in m.iter_mut() {

@@ -223,6 +223,8 @@ export class HybridBackend implements Backend {
         const ids = stableIds(found)
         this.rgbDevices = new Map(found.map((d, k) => [ids[k], d.index]))
         this.rgbNames = new Map(found.map((d) => [d.index, d.name]))
+        this.rgbKinds = new Map(found.map((d) => [d.index, d.kind]))
+        void invoke('activity_log', { line: 'OpenRGB devices: ' + found.map((d) => `#${d.index} ${d.name}`).join('; ') }).catch(() => undefined)
         // the cooler is driven directly (see flushKraken); its built-in effects are only the fallback
         this.hwDevices = new Set()
         this.krakenDirect = new Map(
@@ -328,6 +330,7 @@ export class HybridBackend implements Backend {
 
   setLeds(id: string, colors: RGB[]) {
     if (id === SCREEN_ID || id.startsWith(DECK_PREFIX)) return // the screen loop and the deck stream send these
+    if (useSettings.getState().leaveAlone.includes(id)) return // the user has asked for nothing to be sent here
     if (this.krakenDirect.has(id)) {
       this.krakenFrames.set(id, colors)
       return
@@ -431,6 +434,7 @@ export class HybridBackend implements Backend {
 
   private lastRgbAt = new Map<number, number>()
   private rgbNames = new Map<number, string>()
+  private rgbKinds = new Map<number, number>()
 
   /**
    * Through OpenRGB's driver the Kraken only follows about one update a second (tested on a 2024 Elite; faster
@@ -439,7 +443,16 @@ export class HybridBackend implements Backend {
    * if it has to be streamed through OpenRGB. Everything else takes frames at full speed.
    */
   private rgbInterval(idx: number) {
-    return /kraken|nzxt/i.test(this.rgbNames.get(idx) ?? '') ? 1000 : 0
+    const name = this.rgbNames.get(idx) ?? ''
+    if (/kraken|nzxt/i.test(name)) return 1000
+    if (MONITOR.test(name)) return MONITOR_MS
+    if (this.rgbKinds.get(idx) === MOTHERBOARD_KIND) return BOARD_MS
+    return 0
+  }
+
+  /** How long a steady color goes unrepeated. A monitor gets the least traffic, since it needs no speed. */
+  private rgbKeepalive(idx: number) {
+    return MONITOR.test(this.rgbNames.get(idx) ?? '') ? MONITOR_KEEPALIVE_MS : KEEPALIVE_MS
   }
 
   private async flushRgb() {
@@ -456,7 +469,7 @@ export class HybridBackend implements Backend {
       const changed = !prev || prev.length !== rgb.length || prev.some((v, k) => v !== rgb[k])
       // many controllers fall back to their own effect if they hear nothing for a few seconds, so a
       // steady color is repeated now and then
-      const stale = now - (this.lastRgbAt.get(i) ?? 0) > KEEPALIVE_MS
+      const stale = now - (this.lastRgbAt.get(i) ?? 0) > this.rgbKeepalive(i)
       if (changed || stale) frames.push([i, rgb])
     }
     this.pending = later
@@ -526,6 +539,15 @@ export class HybridBackend implements Backend {
 }
 
 const KEEPALIVE_MS = 2000
+/**
+ * Monitors and motherboard headers do not need fast frames, and a monitor's controller sits in the same
+ * device as its display, so they get far fewer writes than lights that animate smoothly.
+ */
+const MONITOR = /monitor|(mpg|mag|meg)/i
+const MONITOR_MS = 250
+const MONITOR_KEEPALIVE_MS = 10000
+const MOTHERBOARD_KIND = 0
+const BOARD_MS = 100
 /** Shortest gap between frames to the cooler: 20 a second leaves its USB link free for fan control. */
 const KRAKEN_MS = 50
 

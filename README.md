@@ -67,6 +67,8 @@ Environment switches for development: `LFA_NO_ELEVATE=1` runs the hardware servi
 
 - The webview is started with background throttling disabled, so effects and fan control keep running while the window is hidden in the tray.
 - Starting with Windows launches the app minimized to the tray. With the installer, fan control starts through a scheduled task, so there is no prompt at sign-in.
+- A device that misbehaves when written to can be switched to "Leave this device alone" in its Lighting page; the app then sends it nothing. Monitors and motherboard headers are also written to far less often than lights that animate smoothly.
+- `%LOCALAPPDATA%\Lights Fan Action\activity.log` records, with local times, app starts and stops, OpenRGB connections and device lists, and how many writes each device got per minute, so odd hardware behavior can be matched to what the app was doing.
 - The Keychron firmware is a patched build of Keychron's GPLv2 source; `lfa-per-key.patch` is the complete change.
 
 ## License

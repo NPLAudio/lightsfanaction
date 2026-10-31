@@ -17,6 +17,8 @@ export interface Settings {
   useSimulator: boolean
   /** Output device the sound-reactive effects listen to. Empty means the Windows default. */
   audioDevice: string
+  /** Lighting devices (by id) the app sends nothing to at all. */
+  leaveAlone: string[]
   /** Folder LibreHardwareMonitor is installed in. Empty means look in the usual places. */
   lhmDir: string
 }
@@ -35,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   useSimulator: false,
   audioDevice: '',
   lhmDir: '',
+  leaveAlone: [],
 }
 
 export const useSettings = create<SettingsStore>()(

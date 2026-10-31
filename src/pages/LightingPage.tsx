@@ -12,7 +12,10 @@ import { Disclosure } from '@/components/Disclosure'
 import { EffectCard, EffectOptions } from '@/components/EffectControls'
 import { DeckPane } from '@/components/DeckPane'
 import { ScreenPane } from '@/components/ScreenPane'
+import { SwitchField } from '@/components/Field'
 import { backend } from '@/lib/backend'
+import { IS_TAURI, invoke } from '@/lib/hybrid'
+import { useSettings } from '@/settings'
 import { effectById } from '@/lib/effects'
 import type { Device } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -92,11 +95,30 @@ function ZoneSizes({ dev }: { dev: Device }) {
   )
 }
 
+/** Sends nothing to this device, for a device that misbehaves when written to (a monitor that blanks, say). */
+function LeaveAlone({ dev }: { dev: Device }) {
+  const left = useSettings((s) => s.leaveAlone)
+  const set = useSettings((s) => s.set)
+  const on = left.includes(dev.id)
+  return (
+    <SwitchField
+      label="Leave this device alone"
+      description="Sends it nothing at all. It keeps whatever lighting it has on its own."
+      checked={on}
+      onChange={(v) => {
+        set({ leaveAlone: v ? [...left, dev.id] : left.filter((id) => id !== dev.id) })
+        if (IS_TAURI) void invoke('activity_log', { line: `${dev.name}: ${v ? 'left alone' : 'lighting resumed'}` }).catch(() => undefined)
+      }}
+    />
+  )
+}
+
 export function LightingPage() {
   const { devices, assignments, selectedDevice, syncAll } = useStore()
   const { selectDevice, setSyncAll } = useStore()
   const dev = devices.find((d) => d.id === selectedDevice)
   const a = dev && assignments[dev.id]
+  const left = useSettings((s) => s.leaveAlone)
 
   if (!dev || !a) {
     return (
@@ -145,7 +167,7 @@ export function LightingPage() {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">{d.name}</span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {effectById(assignments[d.id]?.effectId).name}
+                        {left.includes(d.id) ? 'Left alone' : effectById(assignments[d.id]?.effectId).name}
                       </span>
                     </span>
                     <DeviceCanvas device={d} width={s.w} height={s.h} />
@@ -184,6 +206,12 @@ export function LightingPage() {
           <EffectOptions dev={dev} a={a} />
 
           <ZoneSizes key={dev.id} dev={dev} />
+
+          <Card>
+            <CardContent>
+              <LeaveAlone dev={dev} />
+            </CardContent>
+          </Card>
             </>
           )}
         </div>

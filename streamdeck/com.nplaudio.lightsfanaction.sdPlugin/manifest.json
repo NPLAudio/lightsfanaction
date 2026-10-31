@@ -1,7 +1,7 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "Name": "Lights Fan Action",
-  "Version": "0.3.1.0",
+  "Version": "0.3.2.0",
   "Author": "NPLAudio",
   "Description": "Show temperatures, fan speeds and cooler status, control lighting, and turn any keys into part of one lighting display. Needs Lights Fan Action running on the same PC.",
   "Category": "Lights Fan Action",
