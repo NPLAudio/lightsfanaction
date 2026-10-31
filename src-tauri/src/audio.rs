@@ -275,9 +275,21 @@ where
                     }
                 }
             },
-            move |_| {
-                if let Ok(mut s) = on_error.lock() {
-                    s.failed = true;
+            move |e: cpal::Error| {
+                // most notices (the route changed, a missed deadline, real-time priority refused) leave the stream
+                // running; only these mean it has to be rebuilt
+                let fatal = matches!(
+                    e.kind(),
+                    cpal::ErrorKind::DeviceNotAvailable
+                        | cpal::ErrorKind::StreamInvalidated
+                        | cpal::ErrorKind::HostUnavailable
+                        | cpal::ErrorKind::PermissionDenied
+                );
+                note_stream_error(&e, fatal);
+                if fatal {
+                    if let Ok(mut s) = on_error.lock() {
+                        s.failed = true;
+                    }
                 }
             },
             None,
@@ -340,6 +352,15 @@ fn open(choice: &str) -> Result<Running, String> {
     })
 }
 
+static STREAM_NOTICES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Writes the first few stream notices to the log, so a flood of them cannot fill it.
+fn note_stream_error(e: &cpal::Error, fatal: bool) {
+    if STREAM_NOTICES.fetch_add(1, Ordering::Relaxed) < 20 {
+        log(&format!("stream notice ({}): {e}", if fatal { "fatal" } else { "ignored" }));
+    }
+}
+
 fn default_device_id() -> Option<String> {
     cpal::default_host().default_output_device().map(|d| id_of(&d))
 }
@@ -396,8 +417,10 @@ pub fn start(app: AppHandle, control: Arc<Control>) {
                         next_device_check = now + Duration::from_secs(2);
                     }
                     if failed || moved || r.choice != choice {
+                        let why = if failed { "the stream failed" } else if moved { "the default output changed" } else { "another device was chosen" };
+                        log(&format!("reopening: {why}"));
                         running = None;
-                        next_try = now;
+                        next_try = now + Duration::from_millis(500);
                     }
                 }
                 if running.is_none() && now >= next_try {
