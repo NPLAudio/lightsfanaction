@@ -51,13 +51,17 @@ impl Client {
 
         // already elevated (started through the installer's task): the service inherits it, no prompt
         if std::env::var_os("LFA_NO_ELEVATE").is_some() || crate::elevate::is_elevated() {
-            Command::new(&exe)
-                .args(["--token", &tok, "--port-file"])
+            let mut cmd = Command::new(&exe);
+            cmd.args(["--token", &tok, "--port-file"])
                 .arg(&port_file)
                 .args(["--parent", &pid])
-                .args(lhm_dir.map(|d| ["--lhm-dir", d]).into_iter().flatten())
-                .spawn()
-                .map_err(|e| format!("cannot start sidecar: {e}"))?;
+                .args(lhm_dir.map(|d| ["--lhm-dir", d]).into_iter().flatten());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: the service is a console program
+            }
+            cmd.spawn().map_err(|e| format!("cannot start sidecar: {e}"))?;
         } else {
             let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
             let mut list = vec![
