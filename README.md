@@ -1,4 +1,8 @@
-# Lights Fan Action
+<p align="center">
+  <img src="docs/icon.png" alt="Lights Fan Action icon" width="128" height="128">
+</p>
+
+<h1 align="center">Lights Fan Action</h1>
 
 Open-source RGB lighting and fan control for Windows, in the spirit of SignalRGB: live effects, per-key keyboard lighting, a cooler screen, and temperature-driven fan curves with calibration. It lives in the system tray.
 
