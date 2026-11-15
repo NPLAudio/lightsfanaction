@@ -33,6 +33,8 @@ export interface Led {
   /** normalized position, 0..1 */
   x: number
   y: number
+  /** a single line of LEDs (a strip), so there is no "down", only along it */
+  line?: boolean
 }
 
 export type ParamValue = number | string
@@ -40,11 +42,23 @@ export type ParamValue = number | string
 export interface ParamDef {
   key: string
   label: string
-  type: 'range' | 'color'
+  type: 'range' | 'color' | 'gradient'
   min?: number
   max?: number
   step?: number
+  /** gradient only: the last color fades back into the first, so the effect can go around */
+  cyclic?: boolean
   default: ParamValue
+}
+
+/** A fade worth showing as a bar in the effect's options: from one color to another, as the effect draws it. */
+export interface Fade {
+  label: string
+  /** a color setting's key, or a literal #hex */
+  from: string
+  to: string
+  /** how much of `from` there is at `u` along the bar (0 to 1); a straight fade if left out */
+  level?: (p: Record<string, ParamValue>, u: number) => number
 }
 
 export interface Effect {
@@ -56,6 +70,7 @@ export interface Effect {
   name: string
   description: string
   params: ParamDef[]
+  fades?: Fade[]
   render: (led: Led, t: number, p: Record<string, ParamValue>) => RGB
 }
 

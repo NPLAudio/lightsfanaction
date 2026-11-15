@@ -20,7 +20,7 @@ export function ledsFor(d: Device): Led[] {
       const rows = Math.ceil(n / cols)
       out.push({ i, n, x: cols > 1 ? (i % cols) / (cols - 1) : 0.5, y: rows > 1 ? Math.floor(i / cols) / (rows - 1) : 0.5 })
     } else {
-      out.push({ i, n, x: n > 1 ? i / (n - 1) : 0.5, y: 0.5 })
+      out.push({ i, n, x: n > 1 ? i / (n - 1) : 0.5, y: 0.5, line: true })
     }
   }
   cache.set(key, out)

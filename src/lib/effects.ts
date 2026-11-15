@@ -1,4 +1,5 @@
 import { audio, bandAt, beatEnv } from './audio'
+import { ramp, sampleGradient } from './gradient'
 import type { Effect, Led, ParamValue, RGB } from './types'
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
@@ -49,6 +50,44 @@ const angle = (l: Led) => frac(Math.atan2(l.y - 0.5, l.x - 0.5) / (Math.PI * 2) 
 const sensitivity = { key: 'sensitivity', label: 'Sensitivity', type: 'range', min: 30, max: 200, step: 5, default: 100 } as const
 const speed = { key: 'speed', label: 'Speed', type: 'range', min: 0, max: 100, step: 1, default: 40 } as const
 
+const WHITE: RGB = [255, 255, 255]
+
+// default color stops for the themes whose colors can be edited (each reproduces the theme's original look)
+const RAINBOW = ramp(6, (u) => hsv(u, 1, 1), true)
+const FIRE = '#140000@0,#ff2800@0.5,#ffd228@1'
+const AURORA = ramp(5, (u) => hsv(0.33 + u * 0.45, 0.85, 1))
+const SPECTRUM = ramp(6, (u) => hsv(280 / 360 - (u * 200) / 360, 1, 1))
+const SHOCKWAVE = ramp(6, (u) => hsv(190 / 360 + u, 1, 1), true)
+const ENERGY = ramp(6, (u) => hsv(300 / 360 + u, 1, 1), true)
+const METER = '#00dc3c@0,#ffdc00@0.6,#ff1e00@1'
+/** head (u = 0) to the end of the trail (u = 1) */
+const MATRIX = '#e8ffe8@0,#00ff41@0.12,#00b82e@0.45,#004d14@0.8,#000a02@1'
+
+const colors = (def: string, label = 'Colors', cyclic = false) =>
+  ({ key: 'colors', label, type: 'gradient', default: def, ...(cyclic ? { cyclic: true } : {}) }) as const
+
+/** Falling code: bright heads with fading trails, each column at its own pace. A strip has just one line to fall along. */
+function matrixRain(l: Led, t: number, p: Record<string, ParamValue>): RGB {
+  const cols = Math.round(num(p, 'columns'))
+  const trail = num(p, 'trail') / 100
+  const fall = 0.12 + num(p, 'speed') * 0.011
+  const axis = l.line ? l.x : l.y
+  const col = l.line ? 0 : Math.min(cols - 1, Math.floor(l.x * cols))
+  let u = 1 // how far down its trail this spot is: 0 at a head, 1 where nothing is lit
+  const layers = l.line ? 3 : 2
+  for (let layer = 0; layer < layers; layer++) {
+    const pace = fall * (0.6 + 0.8 * hash(col + 101 * layer, 7))
+    const head = frac((t * pace) / (1 + trail) + hash(col, layer + 31)) * (1 + trail)
+    const d = head - axis
+    if (d >= 0 && d < trail) u = Math.min(u, d / trail)
+  }
+  const c = sampleGradient(p.colors, MATRIX, u)
+  if (u >= 1 || u === 0) return c
+  // letters changing along the trail make it shimmer
+  const row = Math.floor(axis * (l.line ? l.n : cols * 1.4))
+  return scale(c, 0.78 + 0.22 * hash(col * 977 + row, Math.floor(t * 9)))
+}
+
 export const EFFECTS: Effect[] = [
   {
     id: 'solid',
@@ -69,30 +108,32 @@ export const EFFECTS: Effect[] = [
     name: 'Rainbow Wave',
     description: 'A rolling spectrum across the device.',
     params: [
+      colors(RAINBOW, 'Colors', true),
       speed,
       { key: 'width', label: 'Width', type: 'range', min: 10, max: 300, step: 5, default: 100 },
     ],
-    render: (l, t, p) => hsv((l.x + l.y * 0.3) * (num(p, 'width') / 100) - t * num(p, 'speed') * 0.01, 1, 1),
+    render: (l, t, p) => sampleGradient(p.colors, RAINBOW, (l.x + l.y * 0.3) * (num(p, 'width') / 100) - t * num(p, 'speed') * 0.01, true),
   },
   {
     id: 'spin',
     name: 'Spectrum Spin',
     description: 'Rainbow that rotates around the center. Best on fans.',
-    params: [speed],
-    render: (l, t, p) => hsv(angle(l) - t * num(p, 'speed') * 0.01, 1, 1),
+    params: [colors(RAINBOW, 'Colors', true), speed],
+    render: (l, t, p) => sampleGradient(p.colors, RAINBOW, angle(l) - t * num(p, 'speed') * 0.01, true),
   },
   {
     id: 'cycle',
     name: 'Color Cycle',
     description: 'Whole device slowly shifts hue.',
-    params: [speed],
-    render: (_l, t, p) => hsv(t * num(p, 'speed') * 0.005, 1, 1),
+    params: [colors(RAINBOW, 'Colors', true), speed],
+    render: (_l, t, p) => sampleGradient(p.colors, RAINBOW, t * num(p, 'speed') * 0.005, true),
   },
   {
     id: 'breathing',
     name: 'Breathing',
     description: 'Gentle fade in and out.',
     params: [{ key: 'color', label: 'Color', type: 'color', default: '#00e0c6' }, speed],
+    fades: [{ label: 'Breath', from: 'color', to: '#000000', level: (_p, u) => (1 - u) ** 2 }],
     render: (_l, t, p) => {
       const k = (Math.sin(t * (0.5 + num(p, 'speed') * 0.04) - Math.PI / 2) + 1) / 2
       return scale(hex(p.color), k * k)
@@ -107,6 +148,7 @@ export const EFFECTS: Effect[] = [
       { key: 'b', label: 'Color B', type: 'color', default: '#2d6bff' },
       speed,
     ],
+    fades: [{ label: 'Blend', from: 'a', to: 'b' }],
     render: (l, t, p) =>
       mix(hex(p.a), hex(p.b), (Math.sin((l.x + l.y * 0.4) * Math.PI * 2 - t * num(p, 'speed') * 0.06) + 1) / 2),
   },
@@ -117,13 +159,17 @@ export const EFFECTS: Effect[] = [
     params: [
       { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
       { key: 'bg', label: 'Background', type: 'color', default: '#10002b' },
+      { key: 'tail', label: 'Tail length', type: 'range', min: 2, max: 60, step: 1, default: 6 },
       speed,
     ],
+    // the bar covers the first 30% of the device behind the head
+    fades: [{ label: 'Tail', from: 'color', to: 'bg', level: (p, u) => Math.exp(-u * 0.3 * (2.4 / (num(p, 'tail') / 100))) }],
     render: (l, t, p) => {
       const ph = frac((t * num(p, 'speed')) / 100)
       const head = ph < 0.5 ? ph * 2 : 2 - ph * 2
       const d = (l.x - head) * (ph < 0.5 ? 1 : -1)
-      const k = d > 0 ? Math.exp(-d * 40) : Math.exp(d * 4)
+      const rate = 2.4 / (num(p, 'tail') / 100)
+      const k = d > 0 ? Math.exp(-d * rate) : Math.exp(d * 4)
       return mix(hex(p.bg), hex(p.color), clamp01(k))
     },
   },
@@ -131,20 +177,20 @@ export const EFFECTS: Effect[] = [
     id: 'fire',
     name: 'Inferno',
     description: 'Flickering flames.',
-    params: [speed],
+    params: [colors(FIRE, 'Flame colors (cool to hot)'), speed],
     render: (l, t, p) => {
       const h = clamp01(noise(l.x * 4 + l.y * 2, t * num(p, 'speed') * 0.08) * 1.3 - 0.15)
-      return h < 0.5 ? mix([20, 0, 0], [255, 40, 0], h * 2) : mix([255, 40, 0], [255, 210, 40], (h - 0.5) * 2)
+      return sampleGradient(p.colors, FIRE, h)
     },
   },
   {
     id: 'aurora',
     name: 'Aurora',
     description: 'Soft greens, teals and violets.',
-    params: [speed],
+    params: [colors(AURORA, 'Colors (calm to bright)'), speed],
     render: (l, t, p) => {
       const n = noise(l.x * 2.5 + l.y, t * num(p, 'speed') * 0.02)
-      return hsv(0.33 + n * 0.45, 0.85, 0.35 + n * 0.65)
+      return scale(sampleGradient(p.colors, AURORA, n), 0.35 + n * 0.65)
     },
   },
   {
@@ -156,6 +202,7 @@ export const EFFECTS: Effect[] = [
       { key: 'bg', label: 'Backdrop', type: 'color', default: '#0b0b3b' },
       { key: 'rate', label: 'Rate', type: 'range', min: 1, max: 20, step: 1, default: 6 },
     ],
+    fades: [{ label: 'Twinkle', from: 'color', to: 'bg' }],
     render: (l, t, p) => {
       const rate = num(p, 'rate')
       const slot = Math.floor(t * rate)
@@ -163,6 +210,19 @@ export const EFFECTS: Effect[] = [
       const lit = hash(l.i, slot) > 0.85 ? 1 - life : 0
       return mix(hex(p.bg), hex(p.color), lit)
     },
+  },
+
+  {
+    id: 'matrix',
+    name: 'Matrix Rain',
+    description: 'Digital rain: bright heads with long fading trails falling at their own pace. On the cooler screen, real falling characters.',
+    params: [
+      colors(MATRIX, 'Colors (head to fade)'),
+      { key: 'speed', label: 'Speed', type: 'range', min: 0, max: 100, step: 1, default: 40 },
+      { key: 'columns', label: 'Columns', type: 'range', min: 4, max: 32, step: 1, default: 16 },
+      { key: 'trail', label: 'Trail length', type: 'range', min: 10, max: 100, step: 1, default: 45 },
+    ],
+    render: matrixRain,
   },
 
   // ---- sound reactive: they follow whatever the PC is playing -------------------------------------
@@ -176,6 +236,7 @@ export const EFFECTS: Effect[] = [
       { key: 'b', label: 'Color B', type: 'color', default: '#2d6bff' },
       sensitivity,
     ],
+    fades: [{ label: 'Blend', from: 'a', to: 'b' }],
     render: (l, t, p) => {
       const g = num(p, 'sensitivity') / 100
       const k = clamp01(0.08 + audio.bass * g * 0.55 + beatEnv(t, 5) * 0.55 * g)
@@ -189,16 +250,12 @@ export const EFFECTS: Effect[] = [
     name: 'Spectrum Analyzer',
     description: 'Each part lights with a frequency: bass in the middle, treble toward the edges.',
     reactive: true,
-    params: [
-      { key: 'hue', label: 'Starting hue', type: 'range', min: 0, max: 360, step: 5, default: 280 },
-      { key: 'span', label: 'Hue range', type: 'range', min: 0, max: 360, step: 5, default: 200 },
-      sensitivity,
-    ],
+    params: [colors(SPECTRUM, 'Colors (bass to treble)'), sensitivity],
     render: (l, _t, p) => {
       const g = num(p, 'sensitivity') / 100
       const u = Math.min(1, Math.abs(l.x - 0.5) * 2)
       const v = clamp01(bandAt(u) * g * 1.4)
-      return hsv(num(p, 'hue') / 360 - u * (num(p, 'span') / 360), 1 - v * v * 0.25, 0.05 + 0.95 * v ** 1.1)
+      return scale(mix(sampleGradient(p.colors, SPECTRUM, u), WHITE, v * v * 0.25), 0.05 + 0.95 * v ** 1.1)
     },
   },
   {
@@ -207,7 +264,7 @@ export const EFFECTS: Effect[] = [
     description: 'Every beat sends a ring of light outward from the center.',
     reactive: true,
     params: [
-      { key: 'hue', label: 'Starting hue', type: 'range', min: 0, max: 360, step: 5, default: 190 },
+      colors(SHOCKWAVE, 'Ring colors', true),
       { key: 'speed', label: 'Ring speed', type: 'range', min: 20, max: 200, step: 5, default: 90 },
       sensitivity,
     ],
@@ -227,7 +284,8 @@ export const EFFECTS: Effect[] = [
         }
       })
       const glow = audio.level * g * 0.18
-      return hsv(num(p, 'hue') / 360 + hue + audio.drift * 0.05, 0.85 - k * 0.3, clamp01(glow + k * g * 1.3))
+      const c = sampleGradient(p.colors, SHOCKWAVE, hue + audio.drift * 0.05, true)
+      return scale(mix(c, WHITE, k * 0.25), clamp01(glow + k * g * 1.3))
     },
   },
   {
@@ -235,7 +293,7 @@ export const EFFECTS: Effect[] = [
     name: 'Level Meter',
     description: 'A classic volume meter that fills along the device, with a peak marker.',
     reactive: true,
-    params: [{ key: 'bg', label: 'Unlit', type: 'color', default: '#0a0a14' }, sensitivity],
+    params: [colors(METER, 'Meter colors (low to high)'), { key: 'bg', label: 'Unlit', type: 'color', default: '#0a0a14' }, sensitivity],
     render: (l, _t, p) => {
       const g = num(p, 'sensitivity') / 100
       const fill = clamp01(audio.level * g * 1.5)
@@ -243,8 +301,7 @@ export const EFFECTS: Effect[] = [
       const peak = clamp01(audio.peak * g * 1.5)
       if (Math.abs(pos - peak) < 0.045 && peak > 0.05) return [255, 255, 255]
       if (pos > fill) return hex(p.bg)
-      // green through yellow to red along the meter
-      return pos < 0.6 ? mix([0, 220, 60], [255, 220, 0], pos / 0.6) : mix([255, 220, 0], [255, 30, 0], (pos - 0.6) / 0.4)
+      return sampleGradient(p.colors, METER, pos)
     },
   },
   {
@@ -252,16 +309,12 @@ export const EFFECTS: Effect[] = [
     name: 'Energy Flow',
     description: 'A flowing rainbow that speeds up and brightens with the music and flashes on beats.',
     reactive: true,
-    params: [
-      { key: 'hue', label: 'Starting hue', type: 'range', min: 0, max: 360, step: 5, default: 300 },
-      { key: 'span', label: 'Hue range', type: 'range', min: 20, max: 360, step: 5, default: 160 },
-      sensitivity,
-    ],
+    params: [colors(ENERGY, 'Colors', true), sensitivity],
     render: (l, t, p) => {
       const g = num(p, 'sensitivity') / 100
       const flash = beatEnv(t, 7) * g
-      const h = num(p, 'hue') / 360 + (l.x + l.y * 0.3) * (num(p, 'span') / 360) - audio.drift
-      return hsv(h, 1 - flash * 0.35, clamp01(0.2 + audio.level * g * 1.1 + flash * 0.5))
+      const c = sampleGradient(p.colors, ENERGY, (l.x + l.y * 0.3) * 0.45 - audio.drift, true)
+      return scale(mix(c, WHITE, flash * 0.35), clamp01(0.2 + audio.level * g * 1.1 + flash * 0.5))
     },
   },
   {
@@ -274,6 +327,7 @@ export const EFFECTS: Effect[] = [
       { key: 'bg', label: 'Glow', type: 'color', default: '#3b0a8f' },
       sensitivity,
     ],
+    fades: [{ label: 'Sparkle', from: 'color', to: 'bg' }],
     render: (l, t, p) => {
       const g = num(p, 'sensitivity') / 100
       const slot = Math.floor(t * 20)

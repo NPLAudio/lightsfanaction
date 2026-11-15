@@ -1,10 +1,13 @@
+import { Fragment } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AudioStatusLine } from '@/components/AudioStatusLine'
 import { Disclosure } from '@/components/Disclosure'
+import { FadeBar } from '@/components/FadeBar'
+import { GradientField } from '@/components/GradientField'
 import { SliderField } from '@/components/Field'
-import { effectById, effectsFor } from '@/lib/effects'
+import { defaultParams, effectById, effectsFor } from '@/lib/effects'
 import type { Assignment, Device } from '@/lib/types'
 import { useStore } from '@/store'
 
@@ -58,37 +61,49 @@ export function EffectOptions({ dev, a }: Props) {
   const setParam = useStore((s) => s.setParam)
   const fx = effectById(a.effectId)
   if (fx.params.length === 0) return null
+  // the fade bars sit under the last color picker, so a change there shows right away
+  const lastColor = fx.params.map((p) => p.type).lastIndexOf('color')
   return (
     <Disclosure
       key={`${dev.id}-${fx.id}`}
       title="Effect options"
       summary={fx.params.map((p) => p.label).join(' · ')}
-      defaultOpen={fx.params.length <= 2}
+      defaultOpen={fx.params.length <= 2 || fx.params.some((p) => p.type === 'gradient')}
     >
-      {fx.params.map((p) =>
-        p.type === 'color' ? (
-          <div key={p.key} className="flex items-center gap-3">
+      {fx.params.map((p, index) => (
+        <Fragment key={p.key}>
+          {p.type === 'gradient' ? (
+            <GradientField
+              label={p.label}
+              value={a.params[p.key]}
+              fallback={String(p.default)}
+              cyclic={p.cyclic}
+              onChange={(v) => setParam(dev.id, p.key, v)}
+            />
+          ) : p.type === 'color' ? (
+          <div className="flex items-center gap-3">
             <Label htmlFor={`p-${p.key}`} className="flex-1 text-sm">{p.label}</Label>
             <input
               id={`p-${p.key}`}
               type="color"
-              value={String(a.params[p.key])}
+              value={String(a.params[p.key] ?? p.default)}
               onChange={(e) => setParam(dev.id, p.key, e.target.value)}
               className="h-8 w-12 cursor-pointer rounded-md border bg-transparent p-0.5"
             />
           </div>
-        ) : (
-          <SliderField
-            key={p.key}
-            label={p.label}
-            value={Number(a.params[p.key])}
-            min={p.min ?? 0}
-            max={p.max ?? 100}
-            step={p.step}
-            onChange={(v) => setParam(dev.id, p.key, v)}
-          />
-        ),
-      )}
+          ) : (
+            <SliderField
+              label={p.label}
+              value={Number(a.params[p.key] ?? p.default)}
+              min={p.min ?? 0}
+              max={p.max ?? 100}
+              step={p.step}
+              onChange={(v) => setParam(dev.id, p.key, v)}
+            />
+          )}
+          {index === lastColor && fx.fades?.map((f) => <FadeBar key={f.label} fade={f} params={{ ...defaultParams(fx.id), ...a.params }} />)}
+        </Fragment>
+      ))}
     </Disclosure>
   )
 }

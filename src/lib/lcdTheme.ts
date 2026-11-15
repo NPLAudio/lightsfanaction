@@ -53,6 +53,34 @@ function heat(c: number[], liquid: number | undefined): number[] {
   return mixc(c, [255, 70, 60], Math.min(1, (liquid - 42) / 10))
 }
 
+const GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789'
+
+/**
+ * The Matrix theme on a screen: real characters, one per cell of the rain, lit in the color the effect gives that cell
+ * (so the head is bright and the trail fades), each cell changing its character now and then.
+ */
+function drawGlyphs(ctx: CanvasRenderingContext2D, theme: Theme, t: number) {
+  const fx = effectById(theme.effectId)
+  const cols = Math.max(4, Math.round(Number(theme.params.columns) || 16))
+  const cell = LCD_SIZE / cols
+  const k = theme.brightness / 100
+  ctx.save()
+  ctx.font = `${Math.round(cell * 0.92)}px "MS Gothic", "Yu Gothic", "Segoe UI Symbol", monospace`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  for (let r = 0; r < cols; r++) {
+    for (let c = 0; c < cols; c++) {
+      const col = fx.render({ i: r * cols + c, n: cols * cols, x: (c + 0.5) / cols, y: (r + 0.5) / cols }, t, theme.params)
+      if (luma(col) < 14) continue
+      // each cell changes character about six times a second, out of step with its neighbors
+      const n = Math.imul(c * 73856093 ^ r * 19349663 ^ Math.floor(t * 6 + c * 0.37) * 83492791, 2654435761) >>> 0
+      ctx.fillStyle = css(col.map((v) => Math.min(255, v * k * 1.15)))
+      ctx.fillText(GLYPHS[n % GLYPHS.length], (c + 0.5) * cell, (r + 0.55) * cell)
+    }
+  }
+  ctx.restore()
+}
+
 export function drawThemed(ctx: CanvasRenderingContext2D, sensors: Sensor[], theme: Theme, t: number) {
   const fx = effectById(theme.effectId)
   const k = (theme.brightness / 100) * BACKDROP
@@ -74,6 +102,7 @@ export function drawThemed(ctx: CanvasRenderingContext2D, sensors: Sensor[], the
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(canvas, 0, 0, LCD_SIZE, LCD_SIZE)
+  if (theme.effectId === 'matrix') drawGlyphs(ctx, theme, t)
 
   const c = LCD_SIZE / 2
   // a dark pool behind the numbers
