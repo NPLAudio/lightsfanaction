@@ -1,0 +1,35 @@
+LIGHTS FAN ACTION - END USER LICENSE AGREEMENT
+
+Please read this agreement before installing. By installing or using Lights Fan Action (the "Software") you agree to it.
+
+1. LICENSE
+
+The Software is open source and licensed under the MIT License:
+
+Copyright (c) 2026 NPLAudio
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+2. HARDWARE AND YOUR DEVICES
+
+The Software controls lighting, fans, coolers, displays and other hardware, and it can read hardware sensors. Using it carries the risks that come with any tool that talks to hardware, including unexpected device behavior, a display briefly going blank, or settings that differ from what you expect. You use it at your own risk. Check that fan and cooling settings keep your system within safe temperatures. The authors are not responsible for damage to your hardware, data or system.
+
+3. THIRD-PARTY SOFTWARE
+
+The Software works with programs that are not part of it, such as OpenRGB, LibreHardwareMonitor, PawnIO, the Microsoft WebView2 runtime and the Elgato Stream Deck software. Those programs are installed separately, belong to their own authors and are covered by their own licenses. Components included in the Software are listed in THIRD_PARTY_NOTICES.md.
+
+4. PRIVACY
+
+The Software runs on your computer and does not collect personal data. Its control connection listens on your own machine only.
+
+5. TRADEMARKS
+
+Product and company names mentioned in the Software are trademarks of their owners. Their use does not imply any affiliation with or endorsement by them.
+
+6. NO SUPPORT
+
+The Software is provided without any obligation to provide support, updates or fixes.

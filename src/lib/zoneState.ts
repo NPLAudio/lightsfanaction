@@ -45,17 +45,36 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
 
 /** What a device measures on a canvas when first placed. */
 export function defaultSize(d: Device): { w: number; h: number } {
-  switch (d.layout) {
-    case 'ring':
+  if (d.layout === 'ring') return { w: 0.24, h: 0.24 }
+  // typical proportions of the real thing, as width by height in canvas units
+  switch (d.kind) {
+    case 'keyboard':
+      return { w: 0.9, h: 0.3 }
+    case 'mouse':
+      return { w: 0.1, h: 0.18 }
+    case 'gpu':
+      return { w: 0.8, h: 0.22 }
+    case 'ram':
+      return { w: 0.28, h: 0.05 }
+    case 'fan':
       return { w: 0.24, h: 0.24 }
-    case 'grid':
-      return { w: 0.6, h: 0.2 }
     case 'strip':
-      return { w: 0.6, h: 0.05 }
-    default:
-      return { w: 0.4, h: 0.2 }
+      return { w: 0.6, h: 0.04 }
   }
+  return d.layout === 'strip' ? { w: 0.6, h: 0.04 } : { w: 0.4, h: 0.2 }
 }
+
+/** Width over height of common components, for the proportions menu. */
+export const RATIOS: { label: string; value: number }[] = [
+  { label: 'Square (1:1)', value: 1 },
+  { label: 'Standard (4:3)', value: 4 / 3 },
+  { label: 'Wide (16:9)', value: 16 / 9 },
+  { label: 'Keyboard (3:1)', value: 3 },
+  { label: 'Graphics card (4:1)', value: 4 },
+  { label: 'Memory stick (6:1)', value: 6 },
+  { label: 'Light strip (15:1)', value: 15 },
+  { label: 'Tall (1:3)', value: 1 / 3 },
+]
 
 /** Where an LED of a placed device sits on the zone's canvas, as 0 to 1 across and down it. */
 export function ledPoint(p: Placement, lx: number, ly: number, aspect: number): [number, number] {

@@ -11,7 +11,7 @@ import { EffectCard, EffectOptions, type EffectActions } from '@/components/Effe
 import { SliderField } from '@/components/Field'
 import { ZoneCanvas } from '@/components/ZoneCanvas'
 import type { Device } from '@/lib/types'
-import { ASPECTS, memberMap, rootZone, useZones, zoneEffect, type Zone } from '@/lib/zoneState'
+import { ASPECTS, RATIOS, defaultSize, memberMap, rootZone, useZones, zoneEffect, type Zone } from '@/lib/zoneState'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store'
 
@@ -30,7 +30,7 @@ function PlacementPanel({ zone, device }: { zone: Zone; device: Device }) {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{device.name}</p>
-            <p className="text-xs text-muted-foreground">Drag it on the canvas, or use the arrow keys when it is focused.</p>
+            <p className="text-xs text-muted-foreground">Drag it on the canvas, pull the handles to resize, and use the round handle to turn it. Arrow keys nudge it.</p>
           </div>
           <Button size="sm" variant="outline" onClick={() => unplace(device.id)}>Remove from zone</Button>
         </div>
@@ -38,12 +38,36 @@ function PlacementPanel({ zone, device }: { zone: Zone; device: Device }) {
           label={ring ? 'Size' : 'Width'}
           value={Math.round(m.w * 100)}
           min={2}
-          max={200}
+          max={Math.round(zone.aspect * 200)}
           unit="%"
           onChange={(v) => patch(device.id, ring ? { w: v / 100, h: v / 100 } : { w: v / 100 })}
         />
         {!ring && (
-          <SliderField label="Height" value={Math.round(m.h * 100)} min={2} max={100} unit="%" onChange={(v) => patch(device.id, { h: v / 100 })} />
+          <SliderField label="Height" value={Math.round(m.h * 100)} min={2} max={200} unit="%" onChange={(v) => patch(device.id, { h: v / 100 })} />
+        )}
+        {!ring && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-sm text-muted-foreground">Proportions</Label>
+            <Select
+              value=""
+              onValueChange={(v) => v && patch(device.id, { h: m.w / Number(v) })}
+              items={RATIOS.map((r) => ({ value: String(r.value), label: r.label }))}
+            >
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder={`Now ${(m.w / m.h).toFixed(1)}:1`} />
+              </SelectTrigger>
+              <SelectContent>
+                {RATIOS.map((r) => (
+                  <SelectItem key={r.label} value={String(r.value)}>
+                    {r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" onClick={() => patch(device.id, defaultSize(device))}>
+              Typical size
+            </Button>
+          </div>
         )}
         <SliderField label="Rotation" value={Math.round(m.rot)} min={0} max={359} unit="°" onChange={(v) => patch(device.id, { rot: v })} />
       </CardContent>

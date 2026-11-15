@@ -6,7 +6,7 @@
     "category": "Utility",
     "shortDescription": "RGB lighting and fan control",
     "longDescription": "Open-source RGB lighting and fan control: effects, temperature-driven fan curves with calibration, a Kraken cooler screen, and per-key keyboard lighting.",
-    "licenseFile": "installer/LICENSE.rtf",
+    "licenseFile": "installer/EULA.txt",
     "resources": {
       "../sidecar-publish/": "sidecar/",
       "installer/register-tasks.ps1": "register-tasks.ps1",
