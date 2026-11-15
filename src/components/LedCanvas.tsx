@@ -67,9 +67,9 @@ export function LedCanvas({ leds, getColors, width, height, pad = 14 }: Props) {
   return <canvas ref={ref} style={{ width, height }} aria-hidden />
 }
 
-export function DeviceCanvas({ device, width, height }: { device: Device; width: number; height: number }) {
+export function DeviceCanvas({ device, width, height, pad }: { device: Device; width: number; height: number; pad?: number }) {
   const leds = useMemo(() => ledsFor(device), [device])
-  return <LedCanvas leds={leds} width={width} height={height} getColors={() => frames.get(device.id)} />
+  return <LedCanvas leds={leds} width={width} height={height} pad={pad} getColors={() => frames.get(device.id)} />
 }
 
 const STRIP: Led[] = Array.from({ length: 28 }, (_, i) => ({ i, n: 28, x: i / 27, y: 0.5 }))

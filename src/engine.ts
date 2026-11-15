@@ -8,6 +8,7 @@ import { ledsFor } from './lib/layout'
 import { publishDeckFrame } from './lib/deckStream'
 import { applyDeckRipples } from './lib/ripples'
 import { screenTheme } from './lib/screen'
+import { memberMap, renderMember, useZones, zoneEffect } from './lib/zoneState'
 import type { FanLive, RGB } from './lib/types'
 import { kindEnabled, simulatorActive, useSettings } from './settings'
 import { useStore } from './store'
@@ -27,8 +28,12 @@ function renderFrames() {
   const t = performance.now() / 1000
   // listen to the PC's audio only while some device is using a sound-reactive effect
   const worn = screenTheme(devices, assignments)
+  // devices placed in a zone play the zone's effect, laid across its canvas, instead of their own
+  const { zones } = useZones.getState()
+  const placed = memberMap(zones)
   const reactive =
-    devices.some((d) => d.kind !== 'screen' && effectById(assignments[d.id]?.effectId ?? '').reactive) ||
+    devices.some((d) => d.kind !== 'screen' && !placed.has(d.id) && effectById(assignments[d.id]?.effectId ?? '').reactive) ||
+    zones.some((z) => z.members.length > 0 && effectById(zoneEffect(zones, z).effectId).reactive === true) ||
     (worn !== null && effectById(worn.effectId).reactive === true)
   if (reactive && simulatorActive(IS_TAURI)) simulateAudio(t)
   setAudioActive(reactive && !simulatorActive(IS_TAURI))
@@ -37,6 +42,15 @@ function renderFrames() {
   for (const d of devices) {
     const own = assignments[d.id]
     if (!own) continue
+    const inZone = d.kind === 'screen' || d.kind === 'deck' ? undefined : placed.get(d.id)
+    if (inZone) {
+      const za = zoneEffect(zones, inZone.zone)
+      const out = renderMember(za, d, inZone.placement, inZone.zone.aspect, t)
+      frames.set(d.id, out)
+      backend.syncEffect(d.id, za)
+      backend.setLeds(d.id, out)
+      continue
+    }
     // the screen previews the theme it is wearing ("match" takes the cooler's lights)
     const a = d.kind === 'screen' ? (worn ?? own) : own
     const fx = effectById(a.effectId)

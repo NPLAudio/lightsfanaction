@@ -8,18 +8,28 @@ import { FadeBar } from '@/components/FadeBar'
 import { GradientField } from '@/components/GradientField'
 import { SliderField } from '@/components/Field'
 import { defaultParams, effectById, effectsFor } from '@/lib/effects'
-import type { Assignment, Device } from '@/lib/types'
+import type { Assignment, Device, ParamValue } from '@/lib/types'
 import { useStore } from '@/store'
+
+/** Where changes go, when they are not for the device's own effect (a zone's effect, say). */
+export interface EffectActions {
+  setEffect(effectId: string): void
+  setBrightness(value: number): void
+  setParam(key: string, value: ParamValue): void
+}
 
 interface Props {
   dev: Device
   a: Assignment
+  actions?: EffectActions
 }
 
 /** The effect picker and brightness for one device (the cooler's screen included). */
-export function EffectCard({ dev, a, onChoose }: Props & { onChoose?: (effectId: string) => void }) {
-  const setEffect = useStore((s) => s.setEffect)
-  const setBrightness = useStore((s) => s.setBrightness)
+export function EffectCard({ dev, a, actions, onChoose }: Props & { onChoose?: (effectId: string) => void }) {
+  const storeEffect = useStore((s) => s.setEffect)
+  const storeBrightness = useStore((s) => s.setBrightness)
+  const setEffect = (id: string, effectId: string) => (actions ? actions.setEffect(effectId) : storeEffect(id, effectId))
+  const setBrightness = (id: string, v: number) => (actions ? actions.setBrightness(v) : storeBrightness(id, v))
   const fx = effectById(a.effectId)
   const choices = effectsFor(dev.kind)
   return (
@@ -57,8 +67,9 @@ export function EffectCard({ dev, a, onChoose }: Props & { onChoose?: (effectId:
 }
 
 /** The chosen effect's own settings, tucked away unless there are only one or two. */
-export function EffectOptions({ dev, a }: Props) {
-  const setParam = useStore((s) => s.setParam)
+export function EffectOptions({ dev, a, actions }: Props) {
+  const storeParam = useStore((s) => s.setParam)
+  const setParam = (id: string, key: string, v: ParamValue) => (actions ? actions.setParam(key, v) : storeParam(id, key, v))
   const fx = effectById(a.effectId)
   if (fx.params.length === 0) return null
   // the fade bars sit under the last color picker, so a change there shows right away

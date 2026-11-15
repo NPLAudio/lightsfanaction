@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FanIcon, LightbulbIcon, SettingsIcon } from 'lucide-react'
+import { FanIcon, LightbulbIcon, SettingsIcon, ShapesIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -11,10 +11,11 @@ import { backend } from '@/lib/backend'
 import { IS_TAURI } from '@/lib/hybrid'
 import { FansPage } from '@/pages/FansPage'
 import { LightingPage } from '@/pages/LightingPage'
+import { ZonesPage } from '@/pages/ZonesPage'
 import { useSettings } from '@/settings'
 import { useStore } from '@/store'
 
-type Page = 'lighting' | 'fans'
+type Page = 'lighting' | 'zones' | 'fans'
 
 /** Brings fan control in line with the settings: on by default, off hands everything back to firmware. */
 async function syncHardware() {
@@ -75,6 +76,7 @@ export default function App() {
         <Tabs value={page} onValueChange={(v) => setPage(v as Page)}>
           <TabsList>
             <TabsTrigger value="lighting"><LightbulbIcon /> Lighting</TabsTrigger>
+            <TabsTrigger value="zones"><ShapesIcon /> Zones</TabsTrigger>
             <TabsTrigger value="fans"><FanIcon /> Fans</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -90,6 +92,8 @@ export default function App() {
           <p className="p-6 text-sm text-muted-foreground">Looking for devices…</p>
         ) : page === 'lighting' ? (
           <LightingPage />
+        ) : page === 'zones' ? (
+          <ZonesPage />
         ) : (
           <FansPage onOpenSettings={() => setSettingsOpen(true)} />
         )}

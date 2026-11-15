@@ -16,6 +16,7 @@ import { SwitchField } from '@/components/Field'
 import { backend } from '@/lib/backend'
 import { IS_TAURI, invoke } from '@/lib/hybrid'
 import { useSettings } from '@/settings'
+import { memberMap, useZones } from '@/lib/zoneState'
 import { effectById } from '@/lib/effects'
 import type { Device } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -119,6 +120,8 @@ export function LightingPage() {
   const dev = devices.find((d) => d.id === selectedDevice)
   const a = dev && assignments[dev.id]
   const left = useSettings((s) => s.leaveAlone)
+  const zoneList = useZones((s) => s.zones)
+  const inZone = dev ? memberMap(zoneList).get(dev.id)?.zone : undefined
 
   if (!dev || !a) {
     return (
@@ -193,6 +196,11 @@ export function LightingPage() {
               {dev.ledCount} LEDs{syncAll ? ' · changes apply to every device' : ''}
             </p>
             {dev.note && <p className="mt-1 text-sm text-muted-foreground">{dev.note}</p>}
+            {inZone && (
+              <p className="mt-1 text-sm text-primary">
+                Placed in the zone "{inZone.name}", which sets its lighting. The effect below applies again once it is taken out of the zone.
+              </p>
+            )}
           </div>
 
           <Card>
