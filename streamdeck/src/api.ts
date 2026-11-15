@@ -18,6 +18,9 @@ export type Command =
   | { cmd: 'fanMode'; fan: string; mode: 'curve' | 'full' | 'toggle' }
   | { cmd: 'ripple'; deck: string; column: number; row: number }
 
+/** How long the frame connection may go without a word from the app before it is restarted. */
+const SILENCE_MS = 15000
+
 interface Info {
   port: number
   token: string
@@ -61,10 +64,15 @@ async function call(path: string, init?: RequestInit): Promise<Response | undefi
 }
 
 export async function fetchState(): Promise<Snapshot | undefined> {
-  const res = await call('/state')
-  if (!res?.ok) return undefined
-  const s = (await res.json()) as Partial<Snapshot>
-  return s.v === 1 ? (s as Snapshot) : undefined
+  try {
+    const res = await call('/state')
+    if (!res?.ok) return undefined
+    // the request's time limit covers reading the body too, so a slow app can fail here as well
+    const s = (await res.json()) as Partial<Snapshot>
+    return s.v === 1 ? (s as Snapshot) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export async function send(c: Command): Promise<boolean> {
@@ -98,13 +106,22 @@ export interface Frame {
  */
 export function openFrames(on: { frame(f: Frame): void; open(): void; close(): void }): () => void {
   let stopped = false
-  const abort = new AbortController()
+  let abort = new AbortController()
 
   const run = async () => {
     while (!stopped) {
       info ??= await readInfo()
       if (info) {
+        // the app sends something at least every 5 seconds; a connection that has gone quiet (after the PC sleeps,
+        // say) is dropped and made again
+        abort = new AbortController()
+        let watchdog: ReturnType<typeof setTimeout> | undefined
+        const arm = () => {
+          clearTimeout(watchdog)
+          watchdog = setTimeout(() => abort.abort(), SILENCE_MS)
+        }
         try {
+          arm()
           const res = await fetch(`http://127.0.0.1:${info.port}/frames`, {
             headers: { Authorization: `Bearer ${info.token}` },
             signal: abort.signal,
@@ -114,6 +131,7 @@ export function openFrames(on: { frame(f: Frame): void; open(): void; close(): v
             const decoder = new TextDecoder()
             let pending = ''
             for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+              arm()
               pending += decoder.decode(chunk, { stream: true })
               let end: number
               while ((end = pending.indexOf('\n\n')) >= 0) {
@@ -134,6 +152,8 @@ export function openFrames(on: { frame(f: Frame): void; open(): void; close(): v
           }
         } catch {
           info = undefined
+        } finally {
+          clearTimeout(watchdog)
         }
         on.close()
       }

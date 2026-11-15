@@ -20,6 +20,8 @@ async function tick() {
     const s = await fetchState()
     latest = s && Date.now() - s.at < STALE_MS ? s : undefined
     for (const l of listeners) l(latest)
+  } catch {
+    latest = undefined // never let a failed poll take the plugin down; the next one tries again
   } finally {
     busy = false
   }
