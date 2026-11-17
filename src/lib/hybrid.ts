@@ -55,6 +55,9 @@ export class HybridBackend implements Backend {
 
   hwState: HwState = 'off'
   hwError: string | null = null
+  /** failed attempts in a row and when the last one ended, so the app can retry by itself with growing pauses */
+  hwFails = 0
+  hwFailedAt = 0
   hwElevated = false
   private hwRaw: HwRaw | null = null
   private hwSet = new Map<string, number>()
@@ -93,11 +96,24 @@ export class HybridBackend implements Backend {
       this.hwKeys.clear()
       this.hwRaw = await invoke<HwRaw>('hw_apply', { set: [] })
       this.hwState = 'on'
+      this.hwFails = 0
     } catch (e) {
-      this.hwState = 'error'
-      this.hwError = String(e)
+      this.hwFailed(e, 'start')
     }
     this.changed()
+  }
+
+  private hwFailed(e: unknown, when: 'start' | 'lost') {
+    this.hwState = 'error'
+    this.hwError = String(e)
+    this.hwFails++
+    this.hwFailedAt = Date.now()
+    void invoke('activity_log', { line: `fan service ${when === 'start' ? 'did not start' : 'connection lost'} (try ${this.hwFails}): ${this.hwError}` }).catch(() => undefined)
+  }
+
+  /** Pause before the next automatic try: quick at first, then every half minute. */
+  get hwRetryMs() {
+    return [3000, 5000, 10000, 20000][this.hwFails - 1] ?? 30000
   }
 
   async disableHw() {
@@ -529,9 +545,8 @@ export class HybridBackend implements Backend {
       this.hwRaw = await invoke<HwRaw>('hw_apply', { set, release })
       return { sensors: this.hwRaw.sensors, fans: this.hwRaw.fans.map((f) => ({ id: f.id, rpm: f.rpm, pct: f.pct })) }
     } catch (e) {
-      // sidecar is gone and has already returned fans to firmware control
-      this.hwState = 'error'
-      this.hwError = String(e)
+      // sidecar is gone and has already returned fans to firmware control; the app reconnects on its own
+      this.hwFailed(e, 'lost')
       this.changed()
       return { sensors: [], fans: [] }
     }

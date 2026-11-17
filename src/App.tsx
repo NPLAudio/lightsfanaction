@@ -42,6 +42,11 @@ export default function App() {
       await syncHardware()
     })()
 
+    // a fan service that failed to start, or dropped out, is retried by itself
+    const retry = setInterval(() => {
+      if (backend.hwWanted && backend.hwState === 'error' && Date.now() - backend.hwFailedAt >= backend.hwRetryMs) void syncHardware()
+    }, 2000)
+
     // changing the fan switch or the simulator switch takes effect straight away
     const unsub = useSettings.subscribe((s, prev) => {
       if (s.controlFans !== prev.controlFans || s.useSimulator !== prev.useSimulator) {
@@ -57,6 +62,7 @@ export default function App() {
       )
     }
     return () => {
+      clearInterval(retry)
       unsub()
       off?.()
     }

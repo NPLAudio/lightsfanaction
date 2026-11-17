@@ -40,11 +40,17 @@ async function readInfo(): Promise<Info | undefined> {
 
 let info: Info | undefined
 
+/** Why the app could not be reached the last time, for the plugin log. */
+export let lastWhy = ''
+
 async function call(path: string, init?: RequestInit): Promise<Response | undefined> {
   // a stale file (the app restarted on another port) is replaced once, then we give up until the next try
   for (let attempt = 0; attempt < 2; attempt++) {
     info ??= await readInfo()
-    if (!info) return undefined
+    if (!info) {
+      lastWhy = 'control.json missing or unreadable (the app is not running?)'
+      return undefined
+    }
     try {
       const res = await fetch(`http://127.0.0.1:${info.port}${path}`, {
         ...init,
@@ -52,11 +58,13 @@ async function call(path: string, init?: RequestInit): Promise<Response | undefi
         signal: AbortSignal.timeout(3000),
       })
       if (res.status === 401 || res.status === 421) {
+        lastWhy = `app refused the token (${res.status})`
         info = undefined
         continue
       }
       return res
-    } catch {
+    } catch (e) {
+      lastWhy = `no answer from the app: ${e}`
       info = undefined
     }
   }
@@ -69,8 +77,10 @@ export async function fetchState(): Promise<Snapshot | undefined> {
     if (!res?.ok) return undefined
     // the request's time limit covers reading the body too, so a slow app can fail here as well
     const s = (await res.json()) as Partial<Snapshot>
+    if (s.v !== 1) lastWhy = 'the app has not published its state yet'
     return s.v === 1 ? (s as Snapshot) : undefined
-  } catch {
+  } catch (e) {
+    lastWhy = `reading the app's state failed: ${e}`
     return undefined
   }
 }
